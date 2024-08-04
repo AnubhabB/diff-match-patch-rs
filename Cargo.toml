@@ -4,3 +4,10 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+
+[dev-dependencies]
+criterion = "0"
+
+[[bench]]
+name = "prefix"
+harness = false
