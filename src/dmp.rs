@@ -1,4 +1,4 @@
-use std::{time::{Duration, Instant}, u32};
+use std::time::{Duration, Instant};
 
 
 /**
@@ -52,6 +52,15 @@ impl Default for DiffMatchPatch {
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+struct HalfMatch<'a> {
+    prefix_long: &'a [u8],
+    suffix_long: &'a [u8],
+    prefix_short: &'a [u8],
+    suffix_short: &'a [u8],
+    common: &'a [u8]
+}
+
 impl DiffMatchPatch {
     fn checklines(&self) -> bool {
         self.checklines.map_or(true, |c| c)
@@ -60,6 +69,47 @@ impl DiffMatchPatch {
     // returns the configured timeout, defaults to `1`, None or `0` would mean infinite timeout
     fn timeout(&self) -> u64 {
         self.timeout.map_or(u64::MAX, |tout| if tout >  0 { tout } else { u64::MAX })
+    }
+
+    fn diff_main_internal(&self, old_bytes: &[u8], new_bytes: &[u8]) -> Vec<Diff> {
+        // First, check if lhs and rhs are equal
+        if old_bytes == new_bytes {
+            if old_bytes.is_empty() {
+                return Vec::new();
+            }
+
+            return vec![Diff::new(Ops::Equal, old_bytes)];
+        }
+
+        if old_bytes.is_empty() {
+            return vec![Diff::new(Ops::Insert, new_bytes)]
+        }
+
+        if new_bytes.is_empty() {
+            return vec![Diff::new(Ops::Delete, old_bytes)]
+        }
+
+        let deadline = Instant::now().checked_add(Duration::from_secs(self.timeout())).unwrap();
+
+        // Trim common prefix
+        let common_prefix = Self::common_prefix(old_bytes, new_bytes, false);
+        let common_suffix = Self::common_prefix(&old_bytes[common_prefix..], &new_bytes[common_prefix..], true);
+
+        let mut diffs = self.diff_compute(&old_bytes[common_prefix .. old_bytes.len() - common_suffix], &new_bytes[common_prefix .. new_bytes.len() - common_suffix]);
+
+        // Restore the prefix and suffix.
+        if common_prefix > 0 {
+            let mut d = vec![Diff::new(Ops::Equal, &old_bytes[.. common_prefix])];
+            d.append(&mut diffs);
+            diffs = d;
+        }
+
+        if common_suffix > 0 {
+            diffs.push(Diff::new(Ops::Equal, &new_bytes[new_bytes.len() - common_suffix ..]));
+        }
+
+        
+        diffs
     }
 
     
@@ -76,15 +126,14 @@ impl DiffMatchPatch {
 
         let (long, short, old_gt_new) = if old.len() > new.len() { (old, new, true) } else { (new, old, false) };
 
-        let idx = long.windows(short.len()).step_by(1).position(|k| k == short);
         // found a subsequence which contains the short text
-        if let Some(idx) = idx {
+        if let Some(idx) = long.windows(short.len()).step_by(1).position(|k| k == short) {
             // Shorter text is inside the longer text (speedup).
             let op = if old_gt_new { Ops::Delete } else { Ops::Insert };
             let diffs = vec![
                 Diff::new(op, &long[0 .. idx]),
                 Diff::new(Ops::Equal, short),
-                Diff::new(op, &long[idx .. short.len()])
+                Diff::new(op, &long[idx + short.len() ..])
             ];
 
             return diffs;
@@ -97,48 +146,153 @@ impl DiffMatchPatch {
         
         // Check if the problem can be split in two
         if let Some(half_match) = self.diff_half_match(old, new) {
+            let old_a = half_match.prefix_long;
+            let old_b = half_match.suffix_long;
+            
+            let new_a = half_match.prefix_short;
+            let new_b = half_match.suffix_short;
 
+            let mid_common = half_match.common;
+
+            // Send both pairs off for separate processing.
+            let mut diffs_a = self.diff_main_internal(old_a, new_a);
+            let mut diffs_b = self.diff_main_internal(old_b, new_b);
+
+            // Merge the results
+            diffs_a.push(Diff::new(Ops::Equal, mid_common));
+            diffs_a.append(&mut diffs_b);
+            
+            return diffs_a;
         }
-        //   // Check to see if the problem can be split in two.
-        //   var hm = this.diff_halfMatch_(text1, text2);
-        //   if (hm) {
-        //     // A half-match was found, sort out the return data.
-        //     var text1_a = hm[0];
-        //     var text1_b = hm[1];
-        //     var text2_a = hm[2];
-        //     var text2_b = hm[3];
-        //     var mid_common = hm[4];
-        //     // Send both pairs off for separate processing.
-        //     var diffs_a = this.diff_main(text1_a, text2_a, checklines, deadline);
-        //     var diffs_b = this.diff_main(text1_b, text2_b, checklines, deadline);
-        //     // Merge the results.
-        //     return diffs_a.concat([new diff_match_patch.Diff(DIFF_EQUAL, mid_common)],
-        //                           diffs_b);
-        //   }
         
-        //   if (checklines && text1.length > 100 && text2.length > 100) {
-        //     return this.diff_lineMode_(text1, text2, deadline);
-        //   }
-        
-        //   return this.diff_bisect_(text1, text2, deadline);
+        if self.checklines() && old.len() > 100 && new.len() > 100 {
+            return self.diff_line_mode(old, new);
+        }
 
-        todo!()
+        self.diff_bisect(old, new)
     }
 
-    fn diff_half_match(&self, old: &[u8], new: &[u8]) -> Option<()> {
+    fn diff_half_match<'a>(&self, old: &'a [u8], new: &'a [u8]) -> Option<HalfMatch<'a>> {
         // Don't risk returning a suboptimal diff when we have unlimited time
         if self.timeout() == u64::MAX {
             return None;
         }
 
-        let (long, short, old_gt_new) = if old.len() > new.len() { (old, new, true) } else { (new, old, false) };
+        let (long, short) = if old.len() > new.len() { (old, new) } else { (new, old) };
+
         // pointless - two small for this algo
         if long.len() < 4 || short.len() * 2 < long.len() {
             return None;
         }
 
+        // First check if the second quarter is the seed for a half-match.
+        // let hm1 = Self::diff_half_match_i(long, short, (long.len() as f32 / 4.).ceil() as usize);
+        let hm1 = Self::diff_half_match_i(long, short, long.len() / 4 );
+        // Check again based on the third quarter.
+        // let hm2 = Self::diff_half_match_i(long, short, (long.len() as f32 / 2.).ceil() as usize);
+        let hm2 = Self::diff_half_match_i(long, short, long.len() / 2 );
+
+        if hm1.is_none() && hm2.is_none() {
+            return None;
+        }
+
+        let hm = if let (Some(hm1), None) = (&hm1, &hm2) {
+            hm1
+        } else if let (None, Some(hm2)) = (&hm1, &hm2) {
+            hm2
+        } else if let (Some(hm1), Some(hm2)) = (&hm1, &hm2) {
+            // both match, select the longest
+            if hm1.common.len() > hm2.common.len() {
+                hm1
+            } else {
+                hm2
+            }
+        } else {
+            return None
+        };
+
+
+        // A half-match was found, sort out the return data.
+        let half_match = if old.len() > new.len() {
+            HalfMatch {
+                prefix_long: hm.prefix_long,
+                suffix_long: hm.suffix_long,
+                prefix_short: hm.prefix_short,
+                suffix_short: hm.suffix_short,
+                common: hm.common
+            }
+        } else {
+            HalfMatch {
+                prefix_long: hm.prefix_short,
+                suffix_long: hm.suffix_short,
+                prefix_short: hm.prefix_long,
+                suffix_short: hm.suffix_long,
+                common: hm.common
+            }
+        };
         
-        None
+        Some(half_match)
+    }
+
+    fn diff_line_mode(&self, old: &[u8], new: &[u8]) -> Vec<Diff> {
+        todo!()
+    }
+
+    fn diff_bisect(&self, old: &[u8], new: &[u8]) -> Vec<Diff> {
+        todo!()
+    }
+    
+    // Does a substring of shorttext exist within longtext such that the substring
+    // is at least half the length of longtext?
+    //idx Start index of quarter length substring within longtext.
+    fn diff_half_match_i<'a>(long: &'a[u8], short: &'a[u8], idx: usize) -> Option<HalfMatch<'a>> {
+        // Start with a 1/4 length substring at position i as a seed.
+
+        let seed = &long[idx .. idx + long.len() / 4];
+        let mut j = 0;
+
+        let mut best_common: &[u8] = &[];
+        let mut best_long_a: &[u8] = &[];
+        let mut best_long_b: &[u8] = &[];
+        let mut best_short_a: &[u8] = &[];
+        let mut best_short_b: &[u8] = &[];
+
+
+        while let Some(pos) = &short[ j .. ]
+            .windows(seed.len())
+            .step_by(1)
+            .position(|p| p == seed) {
+                j += *pos;
+
+                let prefix_len = Self::common_prefix(&long[idx ..], &short[j ..], false);
+                let suffix_len = Self::common_prefix(&long[.. idx], &short[.. j], true);
+
+                if best_common.len() < suffix_len + prefix_len {
+                    best_common = &short[j - suffix_len .. j + prefix_len];
+                    
+                    best_long_a = &long[.. idx - suffix_len];
+                    best_long_b = &long[idx + prefix_len ..];
+
+                    best_short_a = &short[.. j - suffix_len];
+                    best_short_b = &short[j + prefix_len ..];
+                }
+
+                j += 1;
+        }
+
+        if best_common.len() * 2 >= long.len() {
+            Some(
+                HalfMatch {
+                    prefix_long: best_long_a,
+                    suffix_long: best_long_b,
+                    prefix_short: best_short_a,
+                    suffix_short: best_short_b,
+                    common: best_common
+                }
+            )
+        } else {
+            None
+        }
     }
 
     // returns the number of bytes common in both the str - this is the position in bytes not chars, [0 .. n] is your prefix
@@ -194,35 +348,7 @@ impl DiffMatchPatch {
     /// Returns:
     /// Vec of changes (Diff).
     pub fn diff_main(&self, old: &str, new: &str) -> Vec<Diff> {
-        // First, check if lhs and rhs are equal
-        if old == new {
-            if old.is_empty() {
-                return Vec::new();
-            }
-
-            return vec![Diff::new(Ops::Equal, old.as_bytes())];
-        }
-
-        if old.is_empty() {
-            return vec![Diff::new(Ops::Insert, new.as_bytes())]
-        }
-
-        if new.is_empty() {
-            return vec![Diff::new(Ops::Delete, old.as_bytes())]
-        }
-
-        let deadline = Instant::now().checked_add(Duration::from_secs(self.timeout())).unwrap();
-
-        let old_bytes = old.as_bytes();
-        let new_bytes = new.as_bytes();
-
-        // Trim common prefix
-        let common_prefix = Self::common_prefix(old_bytes, new_bytes, false);
-        let common_suffix = Self::common_prefix(&old_bytes[common_prefix..], &new_bytes[common_prefix..], true);
-
-        let diffs = self.diff_compute(&old_bytes[common_prefix .. old_bytes.len() - common_suffix], &new_bytes[common_prefix .. new_bytes.len() - common_suffix]);
-
-        todo!()
+        self.diff_main_internal(old.as_bytes(), new.as_bytes())
     }
 
     pub fn diff_cleanup_semantic(diffs: &mut [Diff]) {
@@ -273,14 +399,15 @@ impl DiffMatchPatch {
 
 #[cfg(test)]
 mod tests {
-    use crate::dmp::{Diff, Ops};
+    use std::u64;
+
+    use crate::dmp::{Diff, HalfMatch, Ops};
 
     use super::DiffMatchPatch;
 
     // const tests = [
     //     'testDiffIsDestructurable', // TODO
     //     'testDiffCommonOverlap',
-    //     'testDiffHalfMatch',
     //     'testDiffLinesToChars',
     //     'testDiffCharsToLines',
     //     'testDiffCleanupMerge',
@@ -339,6 +466,58 @@ mod tests {
     }
 
     #[test]
+    fn test_diff_half_match() {
+        let mut dmp = DiffMatchPatch::default();
+
+        // No match
+        assert!(dmp.diff_half_match("1234567890".as_bytes(), "abcdef".as_bytes()).is_none());
+        assert!(dmp.diff_half_match("12345".as_bytes(), "23".as_bytes()).is_none());
+
+        // Single Match.
+        assert_eq!(
+            Some(HalfMatch { prefix_long: "12".as_bytes(), suffix_long: "90".as_bytes(), prefix_short: "a".as_bytes(), suffix_short: "z".as_bytes(), common: "345678".as_bytes() }),
+            dmp.diff_half_match("1234567890".as_bytes(), "a345678z".as_bytes())
+        );
+        assert_eq!(
+            Some(HalfMatch { prefix_long: "a".as_bytes(), suffix_long: "z".as_bytes(), prefix_short: "12".as_bytes(), suffix_short: "90".as_bytes(), common: "345678".as_bytes() }),
+            dmp.diff_half_match("a345678z".as_bytes(), "1234567890".as_bytes())
+        );
+        assert_eq!(
+            Some(HalfMatch { prefix_long: "abc".as_bytes(), suffix_long: "z".as_bytes(), prefix_short: "1234".as_bytes(), suffix_short: "0".as_bytes(), common: "56789".as_bytes() }),
+            dmp.diff_half_match("abc56789z".as_bytes(), "1234567890".as_bytes())
+        );
+        assert_eq!(
+            Some(HalfMatch { prefix_long: "a".as_bytes(), suffix_long: "xyz".as_bytes(), prefix_short: "1".as_bytes(), suffix_short: "7890".as_bytes(), common: "23456".as_bytes() }),
+            dmp.diff_half_match("a23456xyz".as_bytes(), "1234567890".as_bytes())
+        );
+
+        // Multiple Matches.
+        assert_eq!(
+            Some(HalfMatch { prefix_long: "12123".as_bytes(), suffix_long: "123121".as_bytes(), prefix_short: "a".as_bytes(), suffix_short: "z".as_bytes(), common: "1234123451234".as_bytes() }),
+            dmp.diff_half_match("121231234123451234123121".as_bytes(), "a1234123451234z".as_bytes())
+        );
+        assert_eq!(
+            Some(HalfMatch { prefix_long: "".as_bytes(), suffix_long: "-=-=-=-=-=".as_bytes(), prefix_short: "x".as_bytes(), suffix_short: "".as_bytes(), common: "x-=-=-=-=-=-=-=".as_bytes() }),
+            dmp.diff_half_match("x-=-=-=-=-=-=-=-=-=-=-=-=".as_bytes(), "xx-=-=-=-=-=-=-=".as_bytes())
+        );
+        assert_eq!(
+            Some(HalfMatch { prefix_long: "-=-=-=-=-=".as_bytes(), suffix_long: "".as_bytes(), prefix_short: "".as_bytes(), suffix_short: "y".as_bytes(), common: "-=-=-=-=-=-=-=y".as_bytes() }),
+            dmp.diff_half_match("-=-=-=-=-=-=-=-=-=-=-=-=y".as_bytes(), "-=-=-=-=-=-=-=yy".as_bytes())
+        );
+
+        // Non-optimal halfmatch.
+        // Optimal diff would be -q+x=H-i+e=lloHe+Hu=llo-Hew+y not -qHillo+x=HelloHe-w+Hulloy
+        assert_eq!(
+            Some(HalfMatch { prefix_long: "qHillo".as_bytes(), suffix_long: "w".as_bytes(), prefix_short: "x".as_bytes(), suffix_short: "Hulloy".as_bytes(), common: "HelloHe".as_bytes() }),
+            dmp.diff_half_match("qHilloHelloHew".as_bytes(), "xHelloHeHulloy".as_bytes())
+        );
+
+        // Optimal no halfmatch.
+        dmp.timeout = Some(u64::MAX);
+        assert!(dmp.diff_half_match("qHilloHelloHew".as_bytes(), "xHelloHeHulloy".as_bytes()).is_none());
+    }
+
+    #[test]
     fn test_diff_main() {
         let dmp = DiffMatchPatch::default();
 
@@ -361,7 +540,17 @@ mod tests {
             dmp.diff_main("a123bc", "abc")
         );
 
-
+        // Two insertions
+        // assert_eq!(
+        //     vec![
+        //         Diff::new(Ops::Equal, "a".as_bytes()),
+        //         Diff::new(Ops::Insert, "123".as_bytes()),
+        //         Diff::new(Ops::Equal, "b".as_bytes()),
+        //         Diff::new(Ops::Insert, "456".as_bytes()),
+        //         Diff::new(Ops::Equal, "c".as_bytes()),
+        //     ],
+        //     dmp.diff_main("abc", "a123b456c")
+        // );
 
 //   // Two insertions.
 //   assertEquivalent([[DIFF_EQUAL, 'a'], [DIFF_INSERT, '123'], [DIFF_EQUAL, 'b'], [DIFF_INSERT, '456'], [DIFF_EQUAL, 'c']], dmp.diff_main('abc', 'a123b456c', false));
