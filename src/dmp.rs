@@ -21,12 +21,12 @@ pub enum Ops {
 /// (Ops::Insert, String::new("Goodbye")) means add `Goodbye`
 /// (Ops::Equal, String::new("World")) means keep world
 #[derive(Debug, PartialEq, Eq)]
-pub struct Diff(Ops, String);
+pub struct Diff(Ops, Vec<u8>);
 
 impl Diff {
     /// Create a new diff object
     pub fn new(op: Ops, text: &[u8]) -> Self {
-        Self(op, String::from_utf8(text.to_vec()).unwrap())
+        Self(op, text.to_vec())
     }
 }
 
@@ -71,7 +71,7 @@ impl DiffMatchPatch {
         self.timeout.map_or(u64::MAX, |tout| if tout >  0 { tout } else { u64::MAX })
     }
 
-    fn main_internal(&self, old_bytes: &[u8], new_bytes: &[u8]) -> Vec<Diff> {
+    fn main_internal<'a>(&self, old_bytes: &'a [u8], new_bytes: &'a [u8]) -> Vec<Diff> {
         // First, check if lhs and rhs are equal
         if old_bytes == new_bytes {
             if old_bytes.is_empty() {
@@ -113,7 +113,7 @@ impl DiffMatchPatch {
     }
 
     
-    fn compute(&self, old: &[u8], new: &[u8]) -> Vec<Diff> {
+    fn compute<'a>(&self, old: &'a [u8], new: &'a [u8]) -> Vec<Diff> {
         // returning all of the new part
         if old.is_empty() {
             return vec![Diff::new(Ops::Insert, new)]
@@ -237,11 +237,11 @@ impl DiffMatchPatch {
     
     // Quick line-level diff on both strings, then rediff the parts for greater accuracy
     // This speedup can produce non-minimal diffs
-    fn line_mode(&self, old: &[u8], new: &[u8]) -> Vec<Diff> {
+    fn line_mode<'a>(&self, old: &'a [u8], new: &'a [u8]) -> Vec<Diff> {
         let to_chars = Self::lines_to_chars(old, new);
         let mut diffs = self.main_internal(
-            to_chars.chars_old.as_bytes(), 
-            to_chars.chars_new.as_bytes()
+            &to_chars.chars_old, 
+            &to_chars.chars_new
         );
 
         Self::chars_to_lines(&mut diffs[..], &to_chars.lines[..]);
@@ -249,7 +249,7 @@ impl DiffMatchPatch {
         todo!()
     }
 
-    fn diff_bisect(&self, old: &[u8], new: &[u8]) -> Vec<Diff> {
+    fn diff_bisect<'a>(&self, old: &'a [u8], new: &'a [u8]) -> Vec<Diff> {
         todo!()
     }
     
@@ -350,8 +350,8 @@ impl DiffMatchPatch {
 
 #[derive(Debug, Eq, PartialEq)]
 struct LineToChars<'a> {
-    chars_old: String,
-    chars_new: String,
+    chars_old: Vec<u8>,
+    chars_new: Vec<u8>,
     lines: Vec<&'a [u8]>
 }
 
@@ -361,13 +361,13 @@ impl DiffMatchPatch {
         let mut linehash: HashMap<&'a [u8], usize> = HashMap::new();
 
         // Allocate 2/3rds of the space for text1, the rest for text2.
-        let mut maxlines = 5;
-        // let mut maxlines = 40000;
+        // let mut maxlines = 5;
+        let mut maxlines = 40000;
         let chars_old = Self::lines_to_chars_internal(old, &mut lines, &mut linehash, maxlines);
         
         // This basically represents the U16::MAX value
-        // maxlines = 65535;
-        maxlines = 7;
+        maxlines = 65535;
+        // maxlines = 7;
         let chars_new = Self::lines_to_chars_internal(new, &mut lines, &mut linehash, maxlines);
         
         LineToChars {
@@ -377,17 +377,19 @@ impl DiffMatchPatch {
         }   
     }
 
-    fn lines_to_chars_internal<'a>(text: &'a [u8], array: &mut Vec<&'a [u8]>, hash: &mut HashMap<&'a [u8], usize>, maxlines: usize) -> String {
+    fn lines_to_chars_internal<'a>(text: &'a [u8], array: &mut Vec<&'a [u8]>, hash: &mut HashMap<&'a [u8], usize>, maxlines: usize) -> Vec<u8> {
         let take = maxlines - array.len();
         println!("Take: {take}");
 
-        let lines = text.split_inclusive(|u| *u == b'\n').enumerate();
+        let mut lines = text.split_inclusive(|u| *u == b'\n').enumerate();
         let mut charlist = Vec::with_capacity(take + 1);
 
         let mut broke = None;
+        let mut cursor = 0;
 
-        while let Some((idx, line)) = lines.next() {
-            
+        for (idx, line) in lines.by_ref() {
+            cursor += line.len();
+
             let entry = hash.entry(line).or_insert(array.len());
             // fresh insert
             if entry == &array.len() {
@@ -395,7 +397,7 @@ impl DiffMatchPatch {
             }
 
             // We know the `maxlines = 65535`, this will never fail
-            charlist.push(char::from_u32(*entry as u32).unwrap())
+            charlist.push(char::from_u32(*entry as u32).unwrap());
 
             if idx == take - 1 {
                 broke = Some(idx);
@@ -403,47 +405,32 @@ impl DiffMatchPatch {
             }
         }
 
-        let mut chars: String = charlist.join("");
-        if let Some(b) = broke {
-            let remainder = String::from_utf8(
-                lines.skip(b)
-                    .map(|(_, l)| l)
-                    .collect::<Vec<_>>()
-                    .concat()
-            ).unwrap().as_str();
+        // 
+        if broke.is_some() {
+            let line = &text[cursor ..];
+            let e = hash.entry(line).or_insert(array.len());
+            array.push(line);
 
-            
+            charlist.push(char::from_u32(*e as u32).unwrap());
         }
-        // let mut chars = lines.take(take)
-        //     .map(|line| {
-        //         
-
-        //         // fresh insert
-        //         if entry == &array.len() {
-        //             array.push(line);
-        //         }
-
-        //         // We know the `maxlines = 65535`, this will never fail
-        //         char::from_u32(*entry as u32).unwrap()
-        //     }).collect::<String>();
-
-        // let t =  ;
-        chars.push_str(String::from_utf8(lines.collect::<Vec<_>>().concat()).unwrap().as_str());
-
-        chars.to_owned()
+        
+        let chars: String = charlist.iter().collect::<String>();
+        
+        chars.as_bytes().to_vec()
     }
 
     fn chars_to_lines(diffs: &mut [Diff], lines: &[&[u8]]) {
         diffs.iter_mut()
         .for_each(|d| {
-            let chars = &d.1;
+            let chars = String::from_utf8(d.1.to_vec()).unwrap();
+            // let mut txt = &[];
             let t = chars.chars().map(|c| {
                 let idx: u32 = c.into();
                 *lines.get(idx as usize).unwrap()
             }).collect::<Vec<_>>()
             .concat();
 
-            d.1 = String::from_utf8(t).unwrap()
+            d.1 = t;
         });
     }
 }
@@ -458,10 +445,11 @@ impl DiffMatchPatch {
     /// 
     /// Returns:
     /// Vec of changes (Diff).
-    pub fn diff_main(&self, old: &str, new: &str) -> Vec<Diff> {
+    pub fn diff_main<'a>(&self, old: &'a str, new: &'a str) -> Vec<Diff> {
         self.main_internal(old.as_bytes(), new.as_bytes())
     }
 
+    // Reduce the number of edits by eliminating semantically trivial equalities
     pub fn diff_cleanup_semantic(diffs: &mut [Diff]) {
         todo!()
     }
@@ -510,8 +498,6 @@ impl DiffMatchPatch {
 
 #[cfg(test)]
 mod tests {
-    use std::u64;
-
     use crate::dmp::{Diff, HalfMatch, LineToChars, Ops};
 
     use super::DiffMatchPatch;
@@ -739,15 +725,15 @@ mod tests {
     fn test_diff_lines_to_chars() {
         // Convert lines down to characters.
         assert_eq!(
-            LineToChars { chars_old: [0_usize, 1, 0].iter().map(|i| char::from_u32(*i as u32).unwrap()).collect::<String>(), chars_new: [1_usize, 0, 1].iter().map(|i| char::from_u32(*i as u32).unwrap()).collect::<String>(), lines: vec![b"alpha\n", b"beta\n"] },
+            LineToChars { chars_old: [0_usize, 1, 0].iter().map(|i| char::from_u32(*i as u32).unwrap()).collect::<String>().as_bytes().to_vec(), chars_new: [1_usize, 0, 1].iter().map(|i| char::from_u32(*i as u32).unwrap()).collect::<String>().as_bytes().to_vec(), lines: vec![b"alpha\n", b"beta\n"] },
             DiffMatchPatch::lines_to_chars(b"alpha\nbeta\nalpha\n", b"beta\nalpha\nbeta\n")
         );
         assert_eq!(
-            LineToChars { chars_old: String::new(), chars_new: [0_usize, 1, 2, 2].iter().map(|i| char::from_u32(*i as u32).unwrap()).collect::<String>(), lines: vec![b"alpha\r\n", b"beta\r\n", b"\r\n"] },
+            LineToChars { chars_old: "".as_bytes().to_vec(), chars_new: [0_usize, 1, 2, 2].iter().map(|i| char::from_u32(*i as u32).unwrap()).collect::<String>().as_bytes().to_vec(), lines: vec![b"alpha\r\n", b"beta\r\n", b"\r\n"] },
             DiffMatchPatch::lines_to_chars(b"", b"alpha\r\nbeta\r\n\r\n\r\n")
         );
         assert_eq!(
-            LineToChars { chars_old: [0_usize].iter().map(|i| char::from_u32(*i as u32).unwrap()).collect::<String>(), chars_new: [1_usize].iter().map(|i| char::from_u32(*i as u32).unwrap()).collect::<String>(), lines: vec![b"a", b"b"] },
+            LineToChars { chars_old: [0_usize].iter().map(|i| char::from_u32(*i as u32).unwrap()).collect::<String>().as_bytes().to_vec(), chars_new: [1_usize].iter().map(|i| char::from_u32(*i as u32).unwrap()).collect::<String>().as_bytes().to_vec(), lines: vec![b"a", b"b"] },
             DiffMatchPatch::lines_to_chars(b"a", b"b")
         );
         
@@ -758,7 +744,7 @@ mod tests {
         let charlist = (0 .. TLIMIT).map(|i| char::from_u32(i as u32).unwrap()).collect::<String>();
 
         assert_eq!(
-            LineToChars { chars_old: charlist, chars_new: String::new(), lines: linelist },
+            LineToChars { chars_old: charlist.as_bytes().to_vec(), chars_new: String::new().as_bytes().to_vec(), lines: linelist },
             DiffMatchPatch::lines_to_chars(linestr.join("").as_bytes(), b"")
         );
     }
@@ -766,9 +752,11 @@ mod tests {
     #[test]
     fn test_diff_chars_to_lines() {
         // Convert chars up to lines.
+        let d1 = [0_usize, 1, 0].iter().map(|i| char::from_u32(*i as u32).unwrap()).collect::<String>();
+        let d2 = [1_usize, 0, 1].iter().map(|i| char::from_u32(*i as u32).unwrap()).collect::<String>();
         let mut diffs = [
-            Diff::new(Ops::Equal, [0_usize, 1, 0].iter().map(|i| char::from_u32(*i as u32).unwrap()).collect::<String>().as_bytes()),
-            Diff::new(Ops::Insert, [1_usize, 0, 1].iter().map(|i| char::from_u32(*i as u32).unwrap()).collect::<String>().as_bytes())
+            Diff::new(Ops::Equal, d1.as_bytes()),
+            Diff::new(Ops::Insert, d2.as_bytes())
         ];
 
         DiffMatchPatch::chars_to_lines(&mut diffs, &[b"alpha\n", b"beta\n"]);
@@ -797,18 +785,9 @@ mod tests {
         let lines = linestr.join("");
         let l2c = DiffMatchPatch::lines_to_chars(lines.as_bytes(), b"");
         
-        let mut diffs = [Diff::new(Ops::Insert, l2c.chars_old.as_bytes())];
+        let mut diffs = [Diff::new(Ops::Insert, &l2c.chars_old)];
         DiffMatchPatch::chars_to_lines(&mut diffs, &l2c.lines);
 
-        assert_eq!(lines, diffs[0].1);
-        // lineList = [];
-        // for (var i = 0; i < 66000; i++) {
-        //     lineList[i] = i + '\n';
-        // }
-        // chars = lineList.join('');
-        // var results = dmp.diff_linesToChars_(chars, '');
-        // diffs = [[DIFF_INSERT, results.chars1]];
-        // dmp.diff_charsToLines_(diffs, results.lineArray);
-        // assertEquals(chars, diffs[0][1]);
+        assert_eq!(lines.as_bytes(), diffs[0].1);
     }
 }
