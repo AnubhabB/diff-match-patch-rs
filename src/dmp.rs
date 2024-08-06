@@ -345,7 +345,206 @@ impl DiffMatchPatch {
         pointmid
     }
 
-    
+    // Reduce the number of edits by eliminating semantically trivial equalities
+    fn cleanup_semantic(diffs: &mut Vec<Diff>) {
+        let mut changes = false;
+
+        let mut pointer = 0_usize;
+        // reducing runtime allocation by giving this vec max capacity
+        let mut equalities = Vec::with_capacity(diffs.len());
+        let mut last_equality = None;
+
+        // Number of bytes changed pre equality
+        let mut insert_len_pre = 0_usize;
+        let mut delete_len_pre = 0_usize;
+
+        // Number of bytes changed post equality
+        let mut insert_len_post = 0_usize;
+        let mut delete_len_post = 0_usize;
+
+        let mut difflen = diffs.len();
+
+        while pointer < difflen {
+            let mut diff_mod = false;
+            if diffs[pointer].0 == Ops::Equal {
+                equalities.push(pointer);
+                // Updating pre equality changes
+                insert_len_pre = insert_len_post;
+                delete_len_pre = delete_len_post;
+
+                // Resetting post insertion changes to 0
+                insert_len_post = 0;
+                delete_len_post = 0;
+
+                last_equality = Some(diffs[pointer].1.clone());
+            } else { // Ops::Insert || Ops::Delete
+                // Increasing changes of post_equality metrics
+                if diffs[pointer].0 == Ops::Insert {
+                    insert_len_post += diffs[pointer].1.len();
+                } else {
+                    delete_len_post += diffs[pointer].1.len();
+                }
+
+                // Eliminate an equality that is smaller or equal to the edits on both
+                // sides of it.
+                if let Some(last_eq) = &last_equality {
+                    if last_eq.len() <= insert_len_pre.max(delete_len_pre)
+                        && last_eq.len() <= insert_len_post.max(delete_len_post) {
+                            
+                            if let Some(&last) = equalities.last() {
+                                // Duplicate record
+                                diffs.insert(last, Diff::new(Ops::Delete, last_eq));
+                                // Change the other copy to insert
+                                diffs[last + 1].0 = Ops::Insert;
+                                // change diff length
+                                difflen = diffs.len();
+
+                                // Throw away the equality we just deleted.
+                                equalities.pop();
+                                // Throw away the previous equality (it needs to be reevaluated).
+                                equalities.pop();
+
+                                diff_mod = true;
+                                changes = true;
+
+                                if let Some(&e) = equalities.last() {
+                                    pointer = e;
+                                } else {
+                                    pointer = 0;
+                                }
+
+                                // reset all counters
+                                insert_len_pre = 0;
+                                delete_len_pre = 0;
+                                insert_len_post = 0;
+                                delete_len_post = 0;
+
+                                last_equality = None;
+                            }
+                    }
+                }
+            }
+
+            pointer += if diff_mod && pointer == 0 { 0 } else { 1 };
+        }
+
+        // Normalize the diff
+        if changes {
+            Self::cleanup_merge(diffs);
+        }
+        // var changes = false;
+        // var equalities = [];  // Stack of indices where equalities are found.
+        // var equalitiesLength = 0;  // Keeping our own length var is faster in JS.
+        // /** @type {?string} */
+        // var lastEquality = null;
+        // // Always equal to diffs[equalities[equalitiesLength - 1]][1]
+        // var pointer = 0;  // Index of current position.
+        // // Number of characters that changed prior to the equality.
+        // var length_insertions1 = 0;
+        // var length_deletions1 = 0;
+        // // Number of characters that changed after the equality.
+        // var length_insertions2 = 0;
+        // var length_deletions2 = 0;
+        
+
+        // // Normalize the diff.
+        // if (changes) {
+        //     this.diff_cleanupMerge(diffs);
+        // }
+        // this.diff_cleanupSemanticLossless(diffs);
+
+        // // Find any overlaps between deletions and insertions.
+        // // e.g: <del>abcxxx</del><ins>xxxdef</ins>
+        // //   -> <del>abc</del>xxx<ins>def</ins>
+        // // e.g: <del>xxxabc</del><ins>defxxx</ins>
+        // //   -> <ins>def</ins>xxx<del>abc</del>
+        // // Only extract an overlap if it is as big as the edit ahead or behind it.
+        // pointer = 1;
+        // while (pointer < diffs.length) {
+        //     if (diffs[pointer - 1][0] == DIFF_DELETE &&
+        //         diffs[pointer][0] == DIFF_INSERT) {
+        //     var deletion = diffs[pointer - 1][1];
+        //     var insertion = diffs[pointer][1];
+        //     var overlap_length1 = this.diff_commonOverlap_(deletion, insertion);
+        //     var overlap_length2 = this.diff_commonOverlap_(insertion, deletion);
+        //     if (overlap_length1 >= overlap_length2) {
+        //         if (overlap_length1 >= deletion.length / 2 ||
+        //             overlap_length1 >= insertion.length / 2) {
+        //         // Overlap found.  Insert an equality and trim the surrounding edits.
+        //         diffs.splice(pointer, 0, new diff_match_patch.Diff(DIFF_EQUAL,
+        //             insertion.substring(0, overlap_length1)));
+        //         diffs[pointer - 1][1] =
+        //             deletion.substring(0, deletion.length - overlap_length1);
+        //         diffs[pointer + 1][1] = insertion.substring(overlap_length1);
+        //         pointer++;
+        //         }
+        //     } else {
+        //         if (overlap_length2 >= deletion.length / 2 ||
+        //             overlap_length2 >= insertion.length / 2) {
+        //         // Reverse overlap found.
+        //         // Insert an equality and swap and trim the surrounding edits.
+        //         diffs.splice(pointer, 0, new diff_match_patch.Diff(DIFF_EQUAL,
+        //             deletion.substring(0, overlap_length2)));
+        //         diffs[pointer - 1][0] = DIFF_INSERT;
+        //         diffs[pointer - 1][1] =
+        //             insertion.substring(0, insertion.length - overlap_length2);
+        //         diffs[pointer + 1][0] = DIFF_DELETE;
+        //         diffs[pointer + 1][1] =
+        //             deletion.substring(overlap_length2);
+        //         pointer++;
+        //         }
+        //     }
+        //     pointer++;
+        //     }
+        //     pointer++;
+        // }
+    }
+
+    // Reorder and merge like edit sections.  Merge equalities.
+    // Any edit section can move as long as it doesn't cross an equality.
+    fn cleanup_merge(diffs: &mut Vec<Diff>) {
+        let mut difflen = diffs.len();
+
+        let mut pointer = 0_usize;
+
+        let mut insert_n = 0;
+        let mut delete_n = 0;
+
+        let mut insert_data = vec![];
+        let mut delete_data = vec![];
+
+        // let mut commonlen = 0;
+
+        while pointer < difflen {
+            match diffs[pointer].0 {
+                Ops::Insert => {
+                    insert_n += 1;
+                    insert_data.append(&mut diffs[pointer].1);
+                    pointer += 1;
+                }
+                Ops::Delete => {
+                    delete_n += 1;
+                    delete_data.append(&mut diffs[pointer].1);
+                    pointer += 1;
+                }
+                Ops::Equal => {
+                    // Upon reaching an equality, check for prior redundancies.
+                    if delete_n + insert_n > 1 {
+                        if delete_n != 0 && insert_n != 0 {
+                            // Factor out any common prefixies.
+                            let commonlen = Self::common_prefix(&insert_data[..], &delete_data[..], false);
+                            if commonlen != 0 {
+
+                            } else {
+                                
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+    }
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -451,6 +650,7 @@ impl DiffMatchPatch {
 
     // Reduce the number of edits by eliminating semantically trivial equalities
     pub fn diff_cleanup_semantic(diffs: &mut [Diff]) {
+
         todo!()
     }
 
@@ -505,7 +705,6 @@ mod tests {
     // const tests = [
     //     'testDiffIsDestructurable', // TODO
     //     'testDiffCommonOverlap',
-    //     'testDiffCleanupMerge',
     //     'testDiffCleanupSemanticLossless',
     //     'testDiffCleanupSemantic',
     //     'testDiffCleanupEfficiency',
@@ -789,5 +988,84 @@ mod tests {
         DiffMatchPatch::chars_to_lines(&mut diffs, &l2c.lines);
 
         assert_eq!(lines.as_bytes(), diffs[0].1);
+    }
+
+    #[test]
+    fn test_diff_cleanup_merge() {
+        // Cleanup a messy diff.
+        // Null case.
+        let mut diffs = vec![];
+        let mut test: Vec<Diff> = vec![];
+        DiffMatchPatch::cleanup_merge(&mut diffs);
+        assert_eq!(test, diffs);
+
+        // No change case
+        diffs = vec![Diff::new(Ops::Equal, b"a"), Diff::new(Ops::Delete, b"b"), Diff::new(Ops::Insert, b"c")];
+        test = vec![Diff::new(Ops::Equal, b"a"), Diff::new(Ops::Delete, b"b"), Diff::new(Ops::Insert, b"c")];
+        DiffMatchPatch::cleanup_merge(&mut diffs);
+        assert_eq!(test, diffs);
+
+        // Merge equalities.
+        diffs = vec![Diff::new(Ops::Equal, b"a"), Diff::new(Ops::Equal, b"b"), Diff::new(Ops::Equal, b"c")];
+        test = vec![Diff::new(Ops::Equal, b"abc")];
+        DiffMatchPatch::cleanup_merge(&mut diffs);
+        assert_eq!(test, diffs);
+
+        // Merge deletions.
+        diffs = vec![Diff::new(Ops::Delete, b"a"), Diff::new(Ops::Delete, b"b"), Diff::new(Ops::Delete, b"c")];
+        test = vec![Diff::new(Ops::Delete, b"abc")];
+        DiffMatchPatch::cleanup_merge(&mut diffs);
+        assert_eq!(test, diffs);
+
+        // Merge insertions.
+        diffs = vec![Diff::new(Ops::Insert, b"a"), Diff::new(Ops::Insert, b"b"), Diff::new(Ops::Insert, b"c")];
+        test = vec![Diff::new(Ops::Insert, b"abc")];
+        DiffMatchPatch::cleanup_merge(&mut diffs);
+        assert_eq!(test, diffs);
+
+        // // Merge interweave.
+        // diffs = [[DIFF_DELETE, 'a'], [DIFF_INSERT, 'b'], [DIFF_DELETE, 'c'], [DIFF_INSERT, 'd'], [DIFF_EQUAL, 'e'], [DIFF_EQUAL, 'f']];
+        // dmp.diff_cleanupMerge(diffs);
+        // assertEquivalent([[DIFF_DELETE, 'ac'], [DIFF_INSERT, 'bd'], [DIFF_EQUAL, 'ef']], diffs);
+
+        // // Prefix and suffix detection.
+        // diffs = [[DIFF_DELETE, 'a'], [DIFF_INSERT, 'abc'], [DIFF_DELETE, 'dc']];
+        // dmp.diff_cleanupMerge(diffs);
+        // assertEquivalent([[DIFF_EQUAL, 'a'], [DIFF_DELETE, 'd'], [DIFF_INSERT, 'b'], [DIFF_EQUAL, 'c']], diffs);
+
+        // // Prefix and suffix detection with equalities.
+        // diffs = [[DIFF_EQUAL, 'x'], [DIFF_DELETE, 'a'], [DIFF_INSERT, 'abc'], [DIFF_DELETE, 'dc'], [DIFF_EQUAL, 'y']];
+        // dmp.diff_cleanupMerge(diffs);
+        // assertEquivalent([[DIFF_EQUAL, 'xa'], [DIFF_DELETE, 'd'], [DIFF_INSERT, 'b'], [DIFF_EQUAL, 'cy']], diffs);
+
+        // // Slide edit left.
+        // diffs = [[DIFF_EQUAL, 'a'], [DIFF_INSERT, 'ba'], [DIFF_EQUAL, 'c']];
+        // dmp.diff_cleanupMerge(diffs);
+        // assertEquivalent([[DIFF_INSERT, 'ab'], [DIFF_EQUAL, 'ac']], diffs);
+
+        // // Slide edit right.
+        // diffs = [[DIFF_EQUAL, 'c'], [DIFF_INSERT, 'ab'], [DIFF_EQUAL, 'a']];
+        // dmp.diff_cleanupMerge(diffs);
+        // assertEquivalent([[DIFF_EQUAL, 'ca'], [DIFF_INSERT, 'ba']], diffs);
+
+        // // Slide edit left recursive.
+        // diffs = [[DIFF_EQUAL, 'a'], [DIFF_DELETE, 'b'], [DIFF_EQUAL, 'c'], [DIFF_DELETE, 'ac'], [DIFF_EQUAL, 'x']];
+        // dmp.diff_cleanupMerge(diffs);
+        // assertEquivalent([[DIFF_DELETE, 'abc'], [DIFF_EQUAL, 'acx']], diffs);
+
+        // // Slide edit right recursive.
+        // diffs = [[DIFF_EQUAL, 'x'], [DIFF_DELETE, 'ca'], [DIFF_EQUAL, 'c'], [DIFF_DELETE, 'b'], [DIFF_EQUAL, 'a']];
+        // dmp.diff_cleanupMerge(diffs);
+        // assertEquivalent([[DIFF_EQUAL, 'xca'], [DIFF_DELETE, 'cba']], diffs);
+
+        // // Empty merge.
+        // diffs = [[DIFF_DELETE, 'b'], [DIFF_INSERT, 'ab'], [DIFF_EQUAL, 'c']];
+        // dmp.diff_cleanupMerge(diffs);
+        // assertEquivalent([[DIFF_INSERT, 'a'], [DIFF_EQUAL, 'bc']], diffs);
+
+        // // Empty equality.
+        // diffs = [[DIFF_EQUAL, ''], [DIFF_INSERT, 'a'], [DIFF_EQUAL, 'b']];
+        // dmp.diff_cleanupMerge(diffs);
+        // assertEquivalent([[DIFF_INSERT, 'a'], [DIFF_EQUAL, 'b']], diffs);
     }
 }
