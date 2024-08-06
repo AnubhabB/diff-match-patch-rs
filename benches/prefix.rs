@@ -4,10 +4,7 @@ use std::path::Path;
 use criterion::{criterion_group, criterion_main, Criterion};
 
 fn prefix_linear(a: &str, b: &str, res: usize) {
-    let found = a.bytes()
-        .zip(b.bytes())
-        .take_while(|(a, b)| a == b )
-        .count();
+    let found = a.bytes().zip(b.bytes()).take_while(|(a, b)| a == b).count();
 
     if found != res {
         panic!()
@@ -25,10 +22,9 @@ fn prefix_binary(a: &str, b: &str, res: usize) {
     let mut pointstart = 0;
 
     while pointmin < pointmid {
-        if a[pointstart .. pointmid] ==
-            b[pointstart .. pointmid] {
-                pointmin = pointmid;
-                pointstart = pointmin;
+        if a[pointstart..pointmid] == b[pointstart..pointmid] {
+            pointmin = pointmid;
+            pointstart = pointmin;
         } else {
             pointmax = pointmid;
         }
@@ -49,24 +45,31 @@ fn create_data() -> Vec<(String, String, usize, usize)> {
             let old = std::fs::read_to_string(basedir.join(format!("old_{n}.txt"))).unwrap();
             let new = std::fs::read_to_string(basedir.join(format!("new_{n}.txt"))).unwrap();
 
-            let res = std::fs::read_to_string(basedir.join(format!("ans_{n}.txt"))).unwrap().parse::<usize>().unwrap();
+            let res = std::fs::read_to_string(basedir.join(format!("ans_{n}.txt")))
+                .unwrap()
+                .parse::<usize>()
+                .unwrap();
 
             (old, new, res, n)
-        }).collect();
+        })
+        .collect();
 
     data
 }
 
 pub fn prefix_bench(c: &mut Criterion) {
     let d = create_data();
-    
+
     for (old, new, res, n) in d.iter() {
         println!("For N={n}");
-        c.bench_function("prefix linear", |bencher| bencher.iter(|| prefix_linear(old, new, *res)));
-        c.bench_function("prefix binary", |bencher| bencher.iter(|| prefix_binary(old, new, *res)));
+        c.bench_function("prefix linear", |bencher| {
+            bencher.iter(|| prefix_linear(old, new, *res))
+        });
+        c.bench_function("prefix binary", |bencher| {
+            bencher.iter(|| prefix_binary(old, new, *res))
+        });
     }
 }
-
 
 criterion_group!(prefix, prefix_bench);
 criterion_main!(prefix);
