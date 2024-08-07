@@ -357,6 +357,7 @@ impl DiffMatchPatch {
     }
 
     fn diff_bisect<'a>(&self, old: &'a [u8], new: &'a [u8]) -> Vec<Diff> {
+        // anubhab
         todo!()
     }
 
@@ -454,6 +455,44 @@ impl DiffMatchPatch {
         pointmid
     }
 
+    fn common_overlap(lhs: &[u8], rhs: &[u8]) -> usize {
+        if lhs.is_empty() || rhs.is_empty() {
+            return 0;
+        }
+        
+        let minlen = lhs.len().min(rhs.len());
+
+        // A working set with longer string truncated
+        let l = if lhs.len() > rhs.len() { &lhs[lhs.len() - rhs.len() ..] } else { lhs };
+        let r = if lhs.len() < rhs.len() { &rhs[..lhs.len()] } else { rhs };
+
+        // Quick check for the worst case.
+        if l == r {
+            return minlen;
+        }
+
+        // Start by looking for a single character match
+        // and increase length until no match is found.
+        // Performance analysis: https://neil.fraser.name/news/2010/11/04/
+        let mut len = 1;
+        let mut best = 0;
+
+        loop {
+            let pattern = &l[minlen - len ..];
+            let found = if let Some(found) = r.windows(pattern.len()).step_by(1).position(|p| p == pattern) {
+                found
+            } else {
+                return best;
+            };
+
+            len += found;
+            if found == 0 || l[minlen - len ..] == r[..len] {
+                best = len;
+                len += 1;
+            }
+        }
+    }
+    
     // Reduce the number of edits by eliminating semantically trivial equalities
     fn cleanup_semantic(diffs: &mut Vec<Diff>) {
         let mut changes = false;
@@ -544,192 +583,180 @@ impl DiffMatchPatch {
         }
 
         Self::cleanup_semantic_lossless(diffs);
-        // var changes = false;
-        // var equalities = [];  // Stack of indices where equalities are found.
-        // var equalitiesLength = 0;  // Keeping our own length var is faster in JS.
-        // /** @type {?string} */
-        // var lastEquality = null;
-        // // Always equal to diffs[equalities[equalitiesLength - 1]][1]
-        // var pointer = 0;  // Index of current position.
-        // // Number of characters that changed prior to the equality.
-        // var length_insertions1 = 0;
-        // var length_deletions1 = 0;
-        // // Number of characters that changed after the equality.
-        // var length_insertions2 = 0;
-        // var length_deletions2 = 0;
+        
+        difflen = diffs.len();
 
-        // // Normalize the diff.
-        // if (changes) {
-        //     this.diff_cleanupMerge(diffs);
-        // }
-        // this.diff_cleanupSemanticLossless(diffs);
+        // Find any overlaps between deletions and insertions.
+        // e.g: <del>abcxxx</del><ins>xxxdef</ins>
+        //   -> <del>abc</del>xxx<ins>def</ins>
+        // e.g: <del>xxxabc</del><ins>defxxx</ins>
+        //   -> <ins>def</ins>xxx<del>abc</del>
+        // Only extract an overlap if it is as big as the edit ahead or behind it.
+        pointer = 1;
+        while difflen > 0 && pointer < difflen {
+            if diffs[pointer - 1].0 == Ops::Delete && diffs[pointer].0 == Ops::Insert {
+                let delete = diffs[pointer - 1].1.to_vec();
+                let insert = diffs[pointer].1.to_vec();
 
-        // // Find any overlaps between deletions and insertions.
-        // // e.g: <del>abcxxx</del><ins>xxxdef</ins>
-        // //   -> <del>abc</del>xxx<ins>def</ins>
-        // // e.g: <del>xxxabc</del><ins>defxxx</ins>
-        // //   -> <ins>def</ins>xxx<del>abc</del>
-        // // Only extract an overlap if it is as big as the edit ahead or behind it.
-        // pointer = 1;
-        // while (pointer < diffs.length) {
-        //     if (diffs[pointer - 1][0] == DIFF_DELETE &&
-        //         diffs[pointer][0] == DIFF_INSERT) {
-        //     var deletion = diffs[pointer - 1][1];
-        //     var insertion = diffs[pointer][1];
-        //     var overlap_length1 = this.diff_commonOverlap_(deletion, insertion);
-        //     var overlap_length2 = this.diff_commonOverlap_(insertion, deletion);
-        //     if (overlap_length1 >= overlap_length2) {
-        //         if (overlap_length1 >= deletion.length / 2 ||
-        //             overlap_length1 >= insertion.length / 2) {
-        //         // Overlap found.  Insert an equality and trim the surrounding edits.
-        //         diffs.splice(pointer, 0, new diff_match_patch.Diff(DIFF_EQUAL,
-        //             insertion.substring(0, overlap_length1)));
-        //         diffs[pointer - 1][1] =
-        //             deletion.substring(0, deletion.length - overlap_length1);
-        //         diffs[pointer + 1][1] = insertion.substring(overlap_length1);
-        //         pointer++;
-        //         }
-        //     } else {
-        //         if (overlap_length2 >= deletion.length / 2 ||
-        //             overlap_length2 >= insertion.length / 2) {
-        //         // Reverse overlap found.
-        //         // Insert an equality and swap and trim the surrounding edits.
-        //         diffs.splice(pointer, 0, new diff_match_patch.Diff(DIFF_EQUAL,
-        //             deletion.substring(0, overlap_length2)));
-        //         diffs[pointer - 1][0] = DIFF_INSERT;
-        //         diffs[pointer - 1][1] =
-        //             insertion.substring(0, insertion.length - overlap_length2);
-        //         diffs[pointer + 1][0] = DIFF_DELETE;
-        //         diffs[pointer + 1][1] =
-        //             deletion.substring(overlap_length2);
-        //         pointer++;
-        //         }
-        //     }
-        //     pointer++;
-        //     }
-        //     pointer++;
-        // }
+                let delete_thres = delete.len() / 2 + if delete.len() % 2 > 0 { 1 } else { 0 };
+                let insert_thres = insert.len() / 2 + if insert.len() % 2 > 0 { 1 } else { 0 };
+
+                let overlap_1 = Self::common_overlap(&delete[..], &insert[..]);
+                let overlap_2 = Self::common_overlap(&insert[..], &delete[..]);
+        
+                if overlap_1 >= overlap_2 &&
+                    (overlap_1 >= delete_thres ||
+                    overlap_1 >= insert_thres) {
+                    // Overlap found.  Insert an equality and trim the surrounding edits.
+                    diffs.insert(pointer, Diff::equal(&insert[..overlap_1]));
+                    diffs[pointer - 1].1 = delete[.. delete.len() - overlap_1].to_vec();
+                    diffs[pointer + 1].1 = insert[overlap_1 ..].to_vec();
+                    difflen = diffs.len();
+                    pointer += 1;
+                } else if overlap_2 >= delete_thres || overlap_2 >= insert_thres {
+                    // Reverse overlap
+                    // Insert equality and swap and trim surrounding edits
+                    diffs.insert(pointer, Diff::equal(&delete[.. overlap_2]));
+                    diffs[pointer - 1] = Diff::insert(&insert[.. insert.len() - overlap_2]);
+                    diffs[pointer + 1] = Diff::delete(&delete[overlap_2 ..]);
+
+                    difflen = diffs.len();
+                    pointer += 1;
+                }
+                pointer += 1;
+            }
+            pointer += 1;
+        }
     }
 
     // Look for single edits surrounded on both sides by equalities
     // e.g: The c<ins>at c</ins>ame. -> The <ins>cat </ins>came.    
     fn cleanup_semantic_lossless(diffs: &mut Vec<Diff>) {
-        // /**
-        //  * Given two strings, compute a score representing whether the internal
-        //  * boundary falls on logical boundaries.
-        //  * Scores range from 6 (best) to 0 (worst).
-        //  * Closure, but does not reference any external variables.
-        //  * @param {string} one First string.
-        //  * @param {string} two Second string.
-        //  * @return {number} The score.
-        //  * @private
-        //  */
-        // function diff_cleanupSemanticScore_(one, two) {
-        //     if (!one || !two) {
-        //     // Edges are the best.
-        //     return 6;
-        //     }
+        let mut pointer = 1_usize;
+        let mut difflen = diffs.len();
 
-        //     // Each port of this function behaves slightly differently due to
-        //     // subtle differences in each language's definition of things like
-        //     // 'whitespace'.  Since this function's purpose is largely cosmetic,
-        //     // the choice has been made to use each language's native features
-        //     // rather than force total conformity.
-        //     var char1 = one.charAt(one.length - 1);
-        //     var char2 = two.charAt(0);
-        //     var nonAlphaNumeric1 = char1.match(diff_match_patch.nonAlphaNumericRegex_);
-        //     var nonAlphaNumeric2 = char2.match(diff_match_patch.nonAlphaNumericRegex_);
-        //     var whitespace1 = nonAlphaNumeric1 &&
-        //         char1.match(diff_match_patch.whitespaceRegex_);
-        //     var whitespace2 = nonAlphaNumeric2 &&
-        //         char2.match(diff_match_patch.whitespaceRegex_);
-        //     var lineBreak1 = whitespace1 &&
-        //         char1.match(diff_match_patch.linebreakRegex_);
-        //     var lineBreak2 = whitespace2 &&
-        //         char2.match(diff_match_patch.linebreakRegex_);
-        //     var blankLine1 = lineBreak1 &&
-        //         one.match(diff_match_patch.blanklineEndRegex_);
-        //     var blankLine2 = lineBreak2 &&
-        //         two.match(diff_match_patch.blanklineStartRegex_);
+        // Intentionally ignore the first and last element (don't need checking).
+        while difflen > 0 && pointer < difflen - 1 {
+            // an edit surrounded by equalities
+            if diffs[pointer - 1].0 == Ops::Equal && diffs[pointer + 1].0 == Ops::Equal {
 
-        //     if (blankLine1 || blankLine2) {
-        //     // Five points for blank lines.
-        //     return 5;
-        //     } else if (lineBreak1 || lineBreak2) {
-        //     // Four points for line breaks.
-        //     return 4;
-        //     } else if (nonAlphaNumeric1 && !whitespace1 && whitespace2) {
-        //     // Three points for end of sentences.
-        //     return 3;
-        //     } else if (whitespace1 || whitespace2) {
-        //     // Two points for whitespace.
-        //     return 2;
-        //     } else if (nonAlphaNumeric1 || nonAlphaNumeric2) {
-        //     // One point for non-alphanumeric.
-        //     return 1;
-        //     }
-        //     return 0;
-        // }
+                let mut equality_prev = diffs[pointer - 1].1.clone();
+                let mut edit = diffs[pointer].1.clone();
+                let mut equality_next = diffs[pointer + 1].1.clone();
 
-        // var pointer = 1;
-        // // Intentionally ignore the first and last element (don't need checking).
-        // while (pointer < diffs.length - 1) {
-        //     if (diffs[pointer - 1][0] == DIFF_EQUAL &&
-        //         diffs[pointer + 1][0] == DIFF_EQUAL) {
-        //     // This is a single edit surrounded by equalities.
-        //     var equality1 = diffs[pointer - 1][1];
-        //     var edit = diffs[pointer][1];
-        //     var equality2 = diffs[pointer + 1][1];
+                // Shift the edit as far left as possible
+                let commonlen = Self::common_prefix(&equality_prev[..], &edit[..], true);
+                if commonlen > 0 {
+                    let mut common_prev = edit[edit.len() - commonlen ..].to_vec();
+                    let mut common_next = common_prev.clone();
+                    
+                    equality_prev = equality_prev[.. equality_prev.len() - commonlen].to_vec();
+                    common_prev.append(&mut edit[.. edit.len() - commonlen].to_vec());
+                    edit = common_prev;
+                    
+                    common_next.append(&mut equality_next.to_vec());
+                    equality_next = common_next;
+                }
 
-        //     // First, shift the edit as far left as possible.
-        //     var commonOffset = this.diff_commonSuffix(equality1, edit);
-        //     if (commonOffset) {
-        //         var commonString = edit.substring(edit.length - commonOffset);
-        //         equality1 = equality1.substring(0, equality1.length - commonOffset);
-        //         edit = commonString + edit.substring(0, edit.length - commonOffset);
-        //         equality2 = commonString + equality2;
-        //     }
+                // Step byte by byte right looking for the best fit
+                let mut best_equality_prev = equality_prev.clone();
+                let mut best_edit = edit.clone();
+                let mut best_equality_next = equality_next.clone();
 
-        //     // Second, step character by character right, looking for the best fit.
-        //     var bestEquality1 = equality1;
-        //     var bestEdit = edit;
-        //     var bestEquality2 = equality2;
-        //     var bestScore = diff_cleanupSemanticScore_(equality1, edit) +
-        //         diff_cleanupSemanticScore_(edit, equality2);
-        //     while (edit.charAt(0) === equality2.charAt(0)) {
-        //         equality1 += edit.charAt(0);
-        //         edit = edit.substring(1) + equality2.charAt(0);
-        //         equality2 = equality2.substring(1);
-        //         var score = diff_cleanupSemanticScore_(equality1, edit) +
-        //             diff_cleanupSemanticScore_(edit, equality2);
-        //         // The >= encourages trailing rather than leading whitespace on edits.
-        //         if (score >= bestScore) {
-        //         bestScore = score;
-        //         bestEquality1 = equality1;
-        //         bestEdit = edit;
-        //         bestEquality2 = equality2;
-        //         }
-        //     }
+                let mut best_score = Self::cleanup_semantic_score(&equality_prev[..], &edit[..])
+                    + Self::cleanup_semantic_score(&edit[..], &equality_next[..]);
 
-        //     if (diffs[pointer - 1][1] != bestEquality1) {
-        //         // We have an improvement, save it back to the diff.
-        //         if (bestEquality1) {
-        //         diffs[pointer - 1][1] = bestEquality1;
-        //         } else {
-        //         diffs.splice(pointer - 1, 1);
-        //         pointer--;
-        //         }
-        //         diffs[pointer][1] = bestEdit;
-        //         if (bestEquality2) {
-        //         diffs[pointer + 1][1] = bestEquality2;
-        //         } else {
-        //         diffs.splice(pointer + 1, 1);
-        //         pointer--;
-        //         }
-        //     }
-        //     }
-        //     pointer++;
-        // }
+                while !edit.is_empty() && !equality_next.is_empty() && edit[0] == equality_next[0] {
+                    equality_prev.push(edit[0]);
+                    edit.remove(0);
+                    edit.push(equality_next[0]);
+
+                    equality_next.remove(0);
+
+                    let score = Self::cleanup_semantic_score(&equality_prev[..], &edit[..]) +
+                        Self::cleanup_semantic_score(&edit[..], &equality_next[..]);
+
+                    // The >= encourages trailing rather than leading whitespace on edits.
+                    if score >= best_score {
+                        best_score = score;
+                        best_equality_prev.clone_from(&equality_prev);
+                        best_edit.clone_from(&edit);
+                        best_equality_next.clone_from(&equality_next);
+                    }
+                }
+
+                // We have an improvement, save it back to the diff.
+                if diffs[pointer - 1].1 != best_equality_prev {
+                    if !best_equality_prev.is_empty() {
+                        diffs[pointer - 1].1 = best_equality_prev.to_vec();
+                    } else {
+                        diffs.remove(pointer - 1);
+                        pointer -= 1;
+                        difflen = diffs.len();
+                    }
+
+                    diffs[pointer].1 = best_edit.to_vec();
+
+                    if !best_equality_next.is_empty() {
+                        diffs[pointer + 1].1 = best_equality_next.to_vec();
+                    } else {
+                        diffs.remove(pointer + 1);
+                        pointer -= 1;
+                        difflen = diffs.len();
+                    }
+                }
+            }
+
+            pointer += 1;
+        }
+    }
+
+
+    // Given two strings, compute a score representing whether the internal
+    // boundary falls on logical boundaries
+    // Scores range from 6 (best) to 0 (worst)
+    fn cleanup_semantic_score(one: &[u8], two: &[u8]) -> u8 {
+        let (char1, char2) = if let (Some(&char1), Some(&char2)) = (one.last(), two.first()) {
+            (char1 as char, char2 as char)
+        } else {
+            return 6;
+        };
+
+        // Each port of this function behaves slightly differently due to
+        // subtle differences in each language's definition of things like
+        // 'whitespace'.  Since this function's purpose is largely cosmetic,
+        // the choice has been made to use each language's native features
+        // rather than force total conformity.
+
+        let whitespace_1 = char1.is_whitespace();
+        let whitespace_2 = char2.is_whitespace();
+
+        let linebreak_1 = whitespace_1 && (char1 == '\n' || char1 == '\r');
+        let linebreak_2 = whitespace_2 && (char2 == '\n' || char2 == '\r');
+
+        let blankline_1 = linebreak_1 && (one.ends_with(b"\n\n") || (one.ends_with(b"\n\r\n")));
+        let blankline_2 = linebreak_2 && (two.starts_with(b"\r\n\n") || two.starts_with(b"\r\n\r\n") || two.starts_with(b"\n\r\n") || two.starts_with(b"\n\n"));
+        
+        // println!("Non-alphanum: [{} {}] Whitespace: [{whitespace_1} {whitespace_2}] Linebreak: [{linebreak_1} {linebreak_2}] Blankline: [{blankline_1} {blankline_2}] Blanklinematch: [{} {}]", !char1.is_alphanumeric(), !char2.is_alphanumeric(), one.ends_with(b"\n"), (two.starts_with(b"\n") || two.starts_with(b"\r")));
+
+        if blankline_1 || blankline_2 {
+            // 5 for blank lines
+            5
+        } else if linebreak_1 || linebreak_2 {
+            // Four points for line breaks.
+            4
+        } else if !char1.is_alphanumeric() && !whitespace_1 && whitespace_2 {
+            // Three points for end of sentences.
+            3
+        } else if whitespace_1 || whitespace_2 {
+            // 2 for whitespace
+            2
+        } else if !char1.is_alphanumeric() || !char2.is_alphanumeric() {
+            // 1 for not alphanumeric
+            1
+        } else {
+            0
+        }
     }
 
     // Reorder and merge like edit sections.  Merge equalities.
@@ -1068,15 +1095,12 @@ mod tests {
 
     // const tests = [
     //     'testDiffIsDestructurable', // TODO
-    //     'testDiffCommonOverlap',
-    //     'testDiffCleanupSemanticLossless',
     //     'testDiffCleanupEfficiency',
     //     'testDiffPrettyHtml',
     //     'testDiffText',
     //     'testDiffDelta',
     //     'testDiffXIndex',
     //     'testDiffLevenshtein',
-    //     'testDiffBisect',
     //     'testMatchAlphabet',
     //     'testMatchBitap',
     //     'testMatchMain',
@@ -1561,7 +1585,7 @@ mod tests {
     }
 
     #[test]
-    fn test_diff_cleanup_semantic() {
+    fn test_diff_cleanup_semantic_overall() {
         // Cleanup semantically trivial equalities.
         // Null case.
         let mut diffs = vec![];
@@ -1661,29 +1685,220 @@ mod tests {
         ];
         DiffMatchPatch::cleanup_semantic(&mut diffs);
         assert_eq!(test, diffs);
-        // diffs = [[DIFF_EQUAL, 'The c'], [DIFF_DELETE, 'ow and the c'], [DIFF_EQUAL, 'at.']];
-        // dmp.diff_cleanupSemantic(diffs);
-        // assertEquivalent([[DIFF_EQUAL, 'The '], [DIFF_DELETE, 'cow and the '], [DIFF_EQUAL, 'cat.']], diffs);
 
-        // // No overlap elimination.
-        // diffs = [[DIFF_DELETE, 'abcxx'], [DIFF_INSERT, 'xxdef']];
-        // dmp.diff_cleanupSemantic(diffs);
-        // assertEquivalent([[DIFF_DELETE, 'abcxx'], [DIFF_INSERT, 'xxdef']], diffs);
+        // No overlap elimination.
+        let mut diffs = vec![
+            Diff::delete(b"abcxx"),
+            Diff::insert(b"xxdef"),
+        ];
+        let test: Vec<Diff> = vec![
+            Diff::delete(b"abcxx"),
+            Diff::insert(b"xxdef"),
+        ];
+        DiffMatchPatch::cleanup_semantic(&mut diffs);
+        assert_eq!(test, diffs);
 
-        // // Overlap elimination.
-        // diffs = [[DIFF_DELETE, 'abcxxx'], [DIFF_INSERT, 'xxxdef']];
-        // dmp.diff_cleanupSemantic(diffs);
-        // assertEquivalent([[DIFF_DELETE, 'abc'], [DIFF_EQUAL, 'xxx'], [DIFF_INSERT, 'def']], diffs);
+        // Overlap elimination.
+        let mut diffs = vec![
+            Diff::delete(b"abcxxx"),
+            Diff::insert(b"xxxdef"),
+        ];
+        let test: Vec<Diff> = vec![
+            Diff::delete(b"abc"),
+            Diff::equal(b"xxx"),
+            Diff::insert(b"def")
+        ];
+        DiffMatchPatch::cleanup_semantic(&mut diffs);
+        assert_eq!(test, diffs);
 
-        // // Reverse overlap elimination.
-        // diffs = [[DIFF_DELETE, 'xxxabc'], [DIFF_INSERT, 'defxxx']];
-        // dmp.diff_cleanupSemantic(diffs);
-        // assertEquivalent([[DIFF_INSERT, 'def'], [DIFF_EQUAL, 'xxx'], [DIFF_DELETE, 'abc']], diffs);
+        // Reverse overlap elimination.
+        let mut diffs = vec![
+            Diff::delete(b"xxxabc"),
+            Diff::insert(b"defxxx"),
+        ];
+        let test: Vec<Diff> = vec![
+            Diff::insert(b"def"),
+            Diff::equal(b"xxx"),
+            Diff::delete(b"abc")
+        ];
+        DiffMatchPatch::cleanup_semantic(&mut diffs);
+        assert_eq!(test, diffs);
 
-        // // Two overlap eliminations.
-        // diffs = [[DIFF_DELETE, 'abcd1212'], [DIFF_INSERT, '1212efghi'], [DIFF_EQUAL, '----'], [DIFF_DELETE, 'A3'], [DIFF_INSERT, '3BC']];
-        // dmp.diff_cleanupSemantic(diffs);
-        // assertEquivalent([[DIFF_DELETE, 'abcd'], [DIFF_EQUAL, '1212'], [DIFF_INSERT, 'efghi'], [DIFF_EQUAL, '----'], [DIFF_DELETE, 'A'], [DIFF_EQUAL, '3'], [DIFF_INSERT, 'BC']], diffs);
+        // Two overlap eliminations.
+        let mut diffs = vec![
+            Diff::delete(b"abcd1212"),
+            Diff::insert(b"1212efghi"),
+            Diff::equal(b"----"),
+            Diff::delete(b"A3"),
+            Diff::insert(b"3BC"),
+        ];
+        let test: Vec<Diff> = vec![
+            Diff::delete(b"abcd"),
+            Diff::equal(b"1212"),
+            Diff::insert(b"efghi"),
+            Diff::equal(b"----"),
+            Diff::delete(b"A"),
+            Diff::equal(b"3"),
+            Diff::insert(b"BC"),
+        ];
+        DiffMatchPatch::cleanup_semantic(&mut diffs);
+        assert_eq!(test, diffs);
+    }
+
+    #[test]
+    fn test_diff_cleanup_semantic_lossless() {
+        // Slide diffs to match logical boundaries.
+        // Null case.
+        let mut diffs: Vec<Diff> = vec![];
+        let test: Vec<Diff> = vec![];
+        DiffMatchPatch::cleanup_semantic_lossless(&mut diffs);
+        assert_eq!(test, diffs);
+
+        // Blank lines.
+        let mut diffs: Vec<Diff> = vec![
+            Diff::equal(b"AAA\r\n\r\nBBB"),
+            Diff::insert(b"\r\nDDD\r\n\r\nBBB"),
+            Diff::equal(b"\r\nEEE")
+        ];
+        let test: Vec<Diff> = vec![
+            Diff::equal(b"AAA\r\n\r\n"),
+            Diff::insert(b"BBB\r\nDDD\r\n\r\n"),
+            Diff::equal(b"BBB\r\nEEE")
+        ];
+        DiffMatchPatch::cleanup_semantic_lossless(&mut diffs);
+        assert_eq!(test, diffs);
+
+        // Line boundaries.
+        let mut diffs: Vec<Diff> = vec![
+            Diff::equal(b"AAA\r\nBBB"),
+            Diff::insert(b" DDD\r\nBBB"),
+            Diff::equal(b" EEE")
+        ];
+        let test: Vec<Diff> = vec![
+            Diff::equal(b"AAA\r\n"),
+            Diff::insert(b"BBB DDD\r\n"),
+            Diff::equal(b"BBB EEE")
+        ];
+        DiffMatchPatch::cleanup_semantic_lossless(&mut diffs);
+        assert_eq!(test, diffs);
+
+        // Word boundaries.
+        let mut diffs: Vec<Diff> = vec![
+            Diff::equal(b"The c"),
+            Diff::insert(b"ow and the c"),
+            Diff::equal(b"at.")
+        ];
+        let test: Vec<Diff> = vec![
+            Diff::equal(b"The "),
+            Diff::insert(b"cow and the "),
+            Diff::equal(b"cat.")
+        ];
+        DiffMatchPatch::cleanup_semantic_lossless(&mut diffs);
+        assert_eq!(test, diffs);
+
+        // Alphanumeric boundaries.
+        let mut diffs: Vec<Diff> = vec![
+            Diff::equal(b"The-c"),
+            Diff::insert(b"ow-and-the-c"),
+            Diff::equal(b"at.")
+        ];
+        let test: Vec<Diff> = vec![
+            Diff::equal(b"The-"),
+            Diff::insert(b"cow-and-the-"),
+            Diff::equal(b"cat.")
+        ];
+        DiffMatchPatch::cleanup_semantic_lossless(&mut diffs);
+        assert_eq!(test, diffs);
+
+        // Hitting the start.
+        let mut diffs: Vec<Diff> = vec![
+            Diff::equal(b"a"),
+            Diff::delete(b"a"),
+            Diff::equal(b"ax")
+        ];
+        let test: Vec<Diff> = vec![
+            Diff::delete(b"a"),
+            Diff::equal(b"aax")
+        ];
+        DiffMatchPatch::cleanup_semantic_lossless(&mut diffs);
+        assert_eq!(test, diffs);
+
+        // Hitting the end.
+        let mut diffs: Vec<Diff> = vec![
+            Diff::equal(b"xa"),
+            Diff::delete(b"a"),
+            Diff::equal(b"a")
+        ];
+        let test: Vec<Diff> = vec![
+            Diff::equal(b"xaa"),
+            Diff::delete(b"a"),
+        ];
+        DiffMatchPatch::cleanup_semantic_lossless(&mut diffs);
+        assert_eq!(test, diffs);
+
+        // Sentence boundaries.
+        let mut diffs: Vec<Diff> = vec![
+            Diff::equal(b"The xxx. The "),
+            Diff::insert(b"zzz. The "),
+            Diff::equal(b"yyy.")
+        ];
+        let test: Vec<Diff> = vec![
+            Diff::equal(b"The xxx."),
+            Diff::insert(b" The zzz."),
+            Diff::equal(b" The yyy."),
+        ];
+        DiffMatchPatch::cleanup_semantic_lossless(&mut diffs);
+        assert_eq!(test, diffs);
+    }
+
+    #[test]
+    fn test_diff_common_overlap() {
+        // Detect any suffix/prefix overlap.
+        // Null case
+        assert_eq!(0, DiffMatchPatch::common_overlap(b"", b"abcd"));
+
+        // Whole case.
+        assert_eq!(3, DiffMatchPatch::common_overlap(b"abc", b"abcd"));
+
+        // No overlap.
+        assert_eq!(0, DiffMatchPatch::common_overlap(b"123456", b"abcd"));
+
+        // Overlap.
+        assert_eq!(3, DiffMatchPatch::common_overlap(b"123456xxx", b"xxxabcd"));
+
+        // Unicode.
+        // Some overly clever languages (C#) may treat ligatures as equal to their
+        // component letters.  E.g. U+FB01 == 'fi'
+        assert_eq!(0, DiffMatchPatch::common_overlap(b"fi", "\u{7FFF}".as_bytes()));
+
+        // Complete overlap
+        assert_eq!(6, DiffMatchPatch::common_overlap("❤️".as_bytes(), "❤️".as_bytes()));
+        
+        // Partial unicode overlap
+        assert_eq!(0, DiffMatchPatch::common_overlap("ஆ".as_bytes(), "இ".as_bytes()));
+        assert_eq!(3, DiffMatchPatch::common_overlap("ஆஇ".as_bytes(), "இ".as_bytes()));
+    }
+    
+    #[test]
+    fn test_diff_bisect() {
+        // Normal.
+
+        // var a = 'cat';
+        // var b = 'map';
+        // Since the resulting diff hasn't been normalized, it would be ok if
+        // the insertion and deletion pairs are swapped.
+        // If the order changes, tweak this test as required.
+        // assert_eq!(vec![
+        //     Diff::delete(b"c"),
+        //     Diff::insert(b"m"),
+        //     Diff::equal(b"a"),
+        //     Diff::delete(b"t"),
+        //     Diff::insert(b"p")
+        // ], Self::diff_bisect());
+        // assertEquivalent([[DIFF_DELETE, 'c'], [DIFF_INSERT, 'm'], [DIFF_EQUAL, 'a'], [DIFF_DELETE, 't'], [DIFF_INSERT, 'p']], dmp.diff_bisect_(a, b, Number.MAX_VALUE));
+
+        // // Timeout.
+        // assertEquivalent([[DIFF_DELETE, 'cat'], [DIFF_INSERT, 'map']], dmp.diff_bisect_(a, b, 0));
     }
     
     #[test]
