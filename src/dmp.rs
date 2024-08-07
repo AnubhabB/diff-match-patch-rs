@@ -120,6 +120,7 @@ impl DiffMatchPatch {
         let mut diffs = self.compute(
             &old_bytes[common_prefix..old_bytes.len() - common_suffix],
             &new_bytes[common_prefix..new_bytes.len() - common_suffix],
+            deadline
         );
 
         // Restore the prefix and suffix.
@@ -139,7 +140,7 @@ impl DiffMatchPatch {
         diffs
     }
 
-    fn compute<'a>(&self, old: &'a [u8], new: &'a [u8]) -> Vec<Diff> {
+    fn compute<'a>(&self, old: &'a [u8], new: &'a [u8], deadline: Instant) -> Vec<Diff> {
         // returning all of the new part
         if old.is_empty() {
             return vec![Diff::insert( new)];
@@ -203,7 +204,7 @@ impl DiffMatchPatch {
             return self.line_mode(old, new);
         }
 
-        self.diff_bisect(old, new)
+        self.bisect(old, new, deadline)
     }
 
     fn half_match<'a>(&self, old: &'a [u8], new: &'a [u8]) -> Option<HalfMatch<'a>> {
@@ -356,9 +357,200 @@ impl DiffMatchPatch {
         diffs
     }
 
-    fn diff_bisect<'a>(&self, old: &'a [u8], new: &'a [u8]) -> Vec<Diff> {
-        // anubhab
-        todo!()
+    // Find the 'middle snake' of a diff, split the problem in two
+    // and return the recursively constructed diff.
+    // See Myers 1986 paper: An O(ND) Difference Algorithm and Its Variations.
+    fn bisect<'a>(&self, old: &'a [u8], new: &'a [u8], deadline: Instant) -> Vec<Diff> {
+        let old_len = old.len() as i32;
+        let new_len = new.len() as i32;
+
+        let max_d = (old_len + new_len + 1) / 2;
+        let v_offset = max_d as usize;
+        let v_len = 2 * max_d as usize;
+
+        let mut v1 = vec![-1_i32; v_len];
+        let mut v2 = vec![-1_i32; v_len];
+        v1[v_offset + 1] = 0;
+        v2[v_offset + 1] = 0;
+
+        let delta = old_len - new_len;
+
+        // If the total number of characters is odd, then the front path will collide
+        // with the reverse path.
+        let front = delta % 2 != 0;
+
+        // Offsets for start and end of k loop.
+        // Prevents mapping of space beyond the grid.
+        let mut k1start = 0;
+        let mut k1end = 0;
+        let mut k2start = 0;
+        let mut k2end = 0;
+        
+        for d in 0 .. max_d {
+            // Bail out if deadline is reached.
+            if Instant::now() > deadline {
+                break;
+            }
+
+            // Walk the front path one step
+            for k1 in (k1start - d .. d - k1end + 1).step_by(2) {
+                let k1_offset = (v_offset as i32 + k1) as usize;
+                
+                let mut x1 = if k1 == -d || (k1 != d && v1[k1_offset - 1] < v1[k1_offset + 1]) {
+                    v1[k1_offset + 1]
+                } else {
+                    v1[k1_offset - 1] + 1
+                };
+                
+                let mut y1 = x1 - k1;
+                while x1 < old_len && y1 < new_len && old[x1 as usize] == new[y1 as usize] {
+                    x1 += 1;
+                    y1 += 1;
+                }
+                // while x1 < text1_length && y1 < text2_length
+                //     && text1[x1] == text2[y1]) {
+                //   x1++;
+                //   y1++;
+                // }
+            }
+            // .step_by(2)
+            // .for_each(|k1| {
+            //     let k1_offset = v_offset + k1;
+            //     let mut x1 = if k1 == -d || (k1 != d && v1[(k1_offset - 1) as usize] < v1[(k1_offset + 1) as usize]) {
+            //         v1[(k1_offset + 1) as usize]
+            //     } else {
+            //         v1[(k1_offset - 1) as usize] + 1
+            //     };
+
+            //     let mut y1 = x1 - k1;
+            //     while x1 < old.len() as i32 && y1 < new.len() as i32 && old.get(x1 as usize) == new.get(y1 as usize) {
+            //         x1 += 1;
+            //         y1 += 1;
+            //     }
+
+            //     v1[k1_offset as usize] = x1;
+
+            //     if x1 > old.len() as i32 {
+            //         // ran off the right of the graph
+            //         k1end += 2;
+            //     } else if y1 > new.len() as i32 {
+            //         // Ran of the bottom of the graph
+            //         k1start += 2;
+            //     } else if front {
+            //         let k2_offset = v_offset + delta - k1;
+            //         if k2_offset >= 0 && k2_offset < v_len && v2[k2_offset as usize] != -1 {
+            //             // Mirror x2 onto top-left coodinate system
+            //             let x2 = old.len() as i32 - v2[k2_offset as usize];
+            //             if x1 >= x2 {
+            //                 // Overlap detected
+            //                 // return Self::bisect_split(old, new, x1 as usize, x2 as usize, deadline);
+            //                 todo!()
+            //             }
+            //         }
+            //     }
+            // });
+        }
+        // for (var d = 0; d < max_d; d++) {
+        //     // Bail out if deadline is reached.
+        //     if ((new Date()).getTime() > deadline) {
+        //     break;
+        //     }
+
+        //     // Walk the front path one step.
+        //     for (var k1 = -d + k1start; k1 <= d - k1end; k1 += 2) {
+        //     var k1_offset = v_offset + k1;
+        //     var x1;
+        //     if (k1 == -d || (k1 != d && v1[k1_offset - 1] < v1[k1_offset + 1])) {
+        //         x1 = v1[k1_offset + 1];
+        //     } else {
+        //         x1 = v1[k1_offset - 1] + 1;
+        //     }
+        //     var y1 = x1 - k1;
+        //     while (x1 < text1_length && y1 < text2_length &&
+        //             text1.charAt(x1) == text2.charAt(y1)) {
+        //         x1++;
+        //         y1++;
+        //     }
+        //     v1[k1_offset] = x1;
+        //     if (x1 > text1_length) {
+        //         // Ran off the right of the graph.
+        //         k1end += 2;
+        //     } else if (y1 > text2_length) {
+        //         // Ran off the bottom of the graph.
+        //         k1start += 2;
+        //     } else if (front) {
+        //         var k2_offset = v_offset + delta - k1;
+        //         if (k2_offset >= 0 && k2_offset < v_length && v2[k2_offset] != -1) {
+        //         // Mirror x2 onto top-left coordinate system.
+        //         var x2 = text1_length - v2[k2_offset];
+        //         if (x1 >= x2) {
+        //             // Overlap detected.
+        //             return this.diff_bisectSplit_(text1, text2, x1, y1, deadline);
+        //         }
+        //         }
+        //     }
+        //     }
+
+        //     // Walk the reverse path one step.
+        //     for (var k2 = -d + k2start; k2 <= d - k2end; k2 += 2) {
+        //     var k2_offset = v_offset + k2;
+        //     var x2;
+        //     if (k2 == -d || (k2 != d && v2[k2_offset - 1] < v2[k2_offset + 1])) {
+        //         x2 = v2[k2_offset + 1];
+        //     } else {
+        //         x2 = v2[k2_offset - 1] + 1;
+        //     }
+        //     var y2 = x2 - k2;
+        //     while (x2 < text1_length && y2 < text2_length &&
+        //             text1.charAt(text1_length - x2 - 1) ==
+        //             text2.charAt(text2_length - y2 - 1)) {
+        //         x2++;
+        //         y2++;
+        //     }
+        //     v2[k2_offset] = x2;
+        //     if (x2 > text1_length) {
+        //         // Ran off the left of the graph.
+        //         k2end += 2;
+        //     } else if (y2 > text2_length) {
+        //         // Ran off the top of the graph.
+        //         k2start += 2;
+        //     } else if (!front) {
+        //         var k1_offset = v_offset + delta - k2;
+        //         if (k1_offset >= 0 && k1_offset < v_length && v1[k1_offset] != -1) {
+        //         var x1 = v1[k1_offset];
+        //         var y1 = v_offset + x1 - k1_offset;
+        //         // Mirror x2 onto top-left coordinate system.
+        //         x2 = text1_length - x2;
+        //         if (x1 >= x2) {
+        //             // Overlap detected.
+        //             return this.diff_bisectSplit_(text1, text2, x1, y1, deadline);
+        //         }
+        //         }
+        //     }
+        //     }
+        // }
+        // Diff took too long and hit the deadline or
+        // number of diffs equals number of characters, no commonality at all.
+        vec![
+            Diff::delete(old),
+            Diff::insert(new)
+        ]
+    }
+
+    fn bisect_split(&self, old: &[u8], new: &[u8], x: usize, y: usize, deadline: Instant) -> Vec<Diff> {
+        let old_a = &old[..x];
+        let new_a = &new[..x];
+
+        let old_b = &old[x..];
+        let new_b = &new[y..];
+
+        // Compute both diffs serially.
+        let mut diffs_a = self.compute(old_a, new_a, deadline);
+        let mut diffs_b = self.compute(old_b, new_b, deadline);
+
+        diffs_a.append(&mut diffs_b);
+        
+        diffs_a
     }
 
     // Does a substring of shorttext exist within longtext such that the substring
@@ -1089,6 +1281,8 @@ impl DiffMatchPatch {
 
 #[cfg(test)]
 mod tests {
+    use std::time::{Duration, Instant};
+
     use crate::dmp::{Diff, HalfMatch, LineToChars, Ops};
 
     use super::DiffMatchPatch;
@@ -1881,20 +2075,19 @@ mod tests {
     
     #[test]
     fn test_diff_bisect() {
-        // Normal.
+        let mut dmp = DiffMatchPatch::default();
 
-        // var a = 'cat';
-        // var b = 'map';
+        // Normal.
         // Since the resulting diff hasn't been normalized, it would be ok if
         // the insertion and deletion pairs are swapped.
         // If the order changes, tweak this test as required.
-        // assert_eq!(vec![
-        //     Diff::delete(b"c"),
-        //     Diff::insert(b"m"),
-        //     Diff::equal(b"a"),
-        //     Diff::delete(b"t"),
-        //     Diff::insert(b"p")
-        // ], Self::diff_bisect());
+        assert_eq!(vec![
+            Diff::delete(b"c"),
+            Diff::insert(b"m"),
+            Diff::equal(b"a"),
+            Diff::delete(b"t"),
+            Diff::insert(b"p")
+        ], dmp.bisect(b"cat", b"map", Instant::now().checked_add(Duration::from_secs(600)).unwrap()));
         // assertEquivalent([[DIFF_DELETE, 'c'], [DIFF_INSERT, 'm'], [DIFF_EQUAL, 'a'], [DIFF_DELETE, 't'], [DIFF_INSERT, 'p']], dmp.diff_bisect_(a, b, Number.MAX_VALUE));
 
         // // Timeout.
