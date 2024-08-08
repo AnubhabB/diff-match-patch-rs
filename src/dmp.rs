@@ -1,10 +1,12 @@
 use std::{
-    collections::HashMap,
-    time::{Duration, Instant},
+    collections::HashMap, time::{Duration, Instant}
 };
 
+use serde::{Deserialize, Serialize};
+use serde_repr::{Deserialize_repr, Serialize_repr};
+
 /// Enum representing the different ops of diff
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Serialize_repr, Deserialize_repr)]
 #[repr(i8)]
 pub enum Ops {
     Delete = -1,
@@ -16,8 +18,11 @@ pub enum Ops {
 /// (Ops::Delete, String::new("Hello")) means delete `Hello`
 /// (Ops::Insert, String::new("Goodbye")) means add `Goodbye`
 /// (Ops::Equal, String::new("World")) means keep world
-#[derive(Debug, PartialEq, Eq)]
-pub struct Diff(Ops, Vec<u8>);
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Diff(
+    Ops,
+    Vec<u8>
+);
 
 impl Diff {
     /// Create a new diff object
@@ -39,7 +44,15 @@ impl Diff {
     }
 }
 
+
+
 pub struct Patch {}
+
+pub enum PatchInput<'a> {
+    Texts(&'a [u8], &'a [u8]),
+    Diffs(&'a [Diff]),
+    TextDiffs(&'a [u8], &'a [Diff])
+}
 
 pub type Patches = Vec<Patch>;
 
@@ -81,7 +94,7 @@ impl DiffMatchPatch {
             .map_or(31536000_u64, |tout| if tout > 0 { tout } else { u64::MAX })
     }
 
-    fn main_internal<'a>(
+    fn diff_internal<'a>(
         &self,
         old_bytes: &'a [u8],
         new_bytes: &'a [u8],
@@ -189,8 +202,8 @@ impl DiffMatchPatch {
             let mid_common = half_match.common;
 
             // Send both pairs off for separate processing.
-            let mut diffs_a = self.main_internal(old_a, new_a, linemode, deadline);
-            let mut diffs_b = self.main_internal(old_b, new_b, linemode, deadline);
+            let mut diffs_a = self.diff_internal(old_a, new_a, linemode, deadline);
+            let mut diffs_b = self.diff_internal(old_b, new_b, linemode, deadline);
 
             // Merge the results
             diffs_a.push(Diff::equal(mid_common));
@@ -275,7 +288,7 @@ impl DiffMatchPatch {
     // This speedup can produce non-minimal diffs
     fn line_mode<'a>(&self, old: &'a [u8], new: &'a [u8], deadline: Instant) -> Vec<Diff> {
         let to_chars = Self::lines_to_chars(old, new);
-        let mut diffs = self.main_internal(&to_chars.chars_old, &to_chars.chars_new, false, deadline);
+        let mut diffs = self.diff_internal(&to_chars.chars_old, &to_chars.chars_new, false, deadline);
 
         // Convert diffs back to text
         Self::chars_to_lines(&mut diffs[..], &to_chars.lines[..]);
@@ -321,7 +334,7 @@ impl DiffMatchPatch {
 
                         pointer = idxstart;
 
-                        let mut subdiffs = self.main_internal(&delete_data, &insert_data, false, deadline);
+                        let mut subdiffs = self.diff_internal(&delete_data, &insert_data, false, deadline);
                         let subdifflen = subdiffs.len();
                         subdiffs.drain(..).rev().for_each(|d| {
                             diffs.insert(pointer, d);
@@ -496,8 +509,8 @@ impl DiffMatchPatch {
         let new_b = &new[y..];
 
         // Compute both diffs serially.
-        let mut diffs_a = self.main_internal(old_a, new_a, false, deadline);
-        let mut diffs_b = self.main_internal(old_b, new_b, false, deadline);
+        let mut diffs_a = self.diff_internal(old_a, new_a, false, deadline);
+        let mut diffs_b = self.diff_internal(old_b, new_b, false, deadline);
 
         diffs_a.append(&mut diffs_b);
 
@@ -963,7 +976,6 @@ impl DiffMatchPatch {
                                 } else {
                                     diffs.insert(0, Diff::equal(&insert_data[..commonlen]));
                                     pointer += 1;
-                                    difflen = diffs.len();
                                 }
                                 insert_data = insert_data[commonlen..].to_vec();
                                 delete_data = delete_data[commonlen..].to_vec();
@@ -1201,16 +1213,22 @@ impl DiffMatchPatch {
     /// Returns:
     /// Vec of changes (Diff).
     pub fn diff_main<'a>(&self, old: &'a str, new: &'a str) -> Vec<Diff> {
-        let deadline = Instant::now()
-            .checked_add(Duration::from_millis(self.timeout()))
-            .unwrap();
+        let deadline = if let Some(i) = Instant::now()
+            .checked_add(Duration::from_millis(self.timeout())) {
+                i
+            } else {
+                todo!()
+            };
 
-        self.main_internal(old.as_bytes(), new.as_bytes(), self.checklines(), deadline)
+        self.diff_internal(old.as_bytes(), new.as_bytes(), self.checklines(), deadline)
     }
 
-    // Reduce the number of edits by eliminating semantically trivial equalities
-    pub fn diff_cleanup_semantic(diffs: &mut [Diff]) {
-        todo!()
+    ///  A diff of two unrelated texts can be filled with coincidental matches.
+    /// For example, the diff of "mouse" and "sofas" is [(-1, "m"), (1, "s"), (0, "o"), (-1, "u"), (1, "fa"), (0, "s"), (-1, "e")].
+    /// While this is the optimum diff, it is difficult for humans to understand. Semantic cleanup rewrites the diff, expanding it into a more intelligible format.
+    /// The above example would become: [(-1, "mouse"), (1, "sofas")]. If a diff is to be human-readable, it should be passed to diff_cleanupSemantic.
+    pub fn diff_cleanup_semantic(diffs: &mut Vec<Diff>) {
+        Self::cleanup_semantic(diffs)
     }
 
     pub fn diff_cleanup_efficiency(diffs: &mut [Diff]) {
@@ -1221,6 +1239,7 @@ impl DiffMatchPatch {
         todo!()
     }
 
+    /// Takes a diff array and returns a pretty HTML sequence. This function is mainly intended as an example from which to write ones own display functions.
     pub fn diff_pretty_html(diffs: &[Diff]) -> String {
         todo!()
     }
@@ -1229,11 +1248,7 @@ impl DiffMatchPatch {
         todo!()
     }
 
-    pub fn patch_make_text_text(text1: &str, text2: &str) -> Patches {
-        todo!()
-    }
-
-    pub fn patch_make_diff(diffs: &[Diff]) -> Patches {
+    pub fn patch_make(input: PatchInput) -> Patches {
         todo!()
     }
 
@@ -2203,18 +2218,18 @@ mod tests {
 
         (String::from_utf8(txt1).unwrap(), String::from_utf8(txt2).unwrap())
     }
-    // function diff_rebuildtexts(diffs) {
-    //     
-    //     var text1 = '';
-    //     var text2 = '';
-    //     for (var x = 0; x < diffs.length; x++) {
-    //       if (diffs[x][0] != DIFF_INSERT) {
-    //         text1 += diffs[x][1];
-    //       }
-    //       if (diffs[x][0] != DIFF_DELETE) {
-    //         text2 += diffs[x][1];
-    //       }
-    //     }
-    //     return [text1, text2];
-    //   }
+    
+    #[test]
+    fn test_serde() {
+        let diffs = vec![
+            Diff::delete(b"a"),
+            Diff::insert("\u{0680}".as_bytes()),
+            Diff::equal(b"x"),
+            Diff::delete(b"\t"),
+            Diff::insert(b"\0")
+        ];
+
+        let serialized = serde_json::to_string(&diffs).unwrap();
+        println!("{serialized}");
+    }
 }
