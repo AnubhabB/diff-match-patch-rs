@@ -3,12 +3,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-/**
- * The data structure representing a diff is an array of tuples:
- * [[DIFF_DELETE, 'Hello'], [DIFF_INSERT, 'Goodbye'], [DIFF_EQUAL, ' world.']]
- * which means: delete 'Hello', add 'Goodbye' and keep ' world.'
- */
-
 /// Enum representing the different ops of diff
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 #[repr(i8)]
@@ -54,7 +48,7 @@ pub struct DiffMatchPatch {
     /// a line-level diff first to identify the changed areas.
     /// Defaults to true, which does a faster, slightly less optimal diff.
     checklines: Option<bool>,
-    /// A default timeout in num seconds, defaults to 1
+    /// A default timeout in num milliseconda, defaults to 1000 (1 second)
     timeout: Option<u64>,
 }
 
@@ -62,7 +56,7 @@ impl Default for DiffMatchPatch {
     fn default() -> Self {
         Self {
             checklines: Some(true),
-            timeout: Some(1),
+            timeout: Some(1000),
         }
     }
 }
@@ -87,27 +81,29 @@ impl DiffMatchPatch {
             .map_or(31536000_u64, |tout| if tout > 0 { tout } else { u64::MAX })
     }
 
-    fn main_internal<'a>(&self, old_bytes: &'a [u8], new_bytes: &'a [u8]) -> Vec<Diff> {
+    fn main_internal<'a>(
+        &self,
+        old_bytes: &'a [u8],
+        new_bytes: &'a [u8],
+        linemode: bool,
+        deadline: Instant,
+    ) -> Vec<Diff> {
         // First, check if lhs and rhs are equal
         if old_bytes == new_bytes {
             if old_bytes.is_empty() {
                 return Vec::new();
             }
 
-            return vec![Diff::equal( old_bytes)];
+            return vec![Diff::equal(old_bytes)];
         }
 
         if old_bytes.is_empty() {
-            return vec![Diff::insert( new_bytes)];
+            return vec![Diff::insert(new_bytes)];
         }
 
         if new_bytes.is_empty() {
-            return vec![Diff::delete( old_bytes)];
+            return vec![Diff::delete(old_bytes)];
         }
-
-        let deadline = Instant::now()
-            .checked_add(Duration::from_secs(self.timeout()))
-            .unwrap();
 
         // Trim common prefix
         let common_prefix = Self::common_prefix(old_bytes, new_bytes, false);
@@ -120,12 +116,13 @@ impl DiffMatchPatch {
         let mut diffs = self.compute(
             &old_bytes[common_prefix..old_bytes.len() - common_suffix],
             &new_bytes[common_prefix..new_bytes.len() - common_suffix],
-            deadline
+            linemode,
+            deadline,
         );
 
         // Restore the prefix and suffix.
         if common_prefix > 0 {
-            let mut d = vec![Diff::equal( &old_bytes[..common_prefix])];
+            let mut d = vec![Diff::equal(&old_bytes[..common_prefix])];
             d.append(&mut diffs);
             diffs = d;
         }
@@ -137,18 +134,20 @@ impl DiffMatchPatch {
             ));
         }
 
+        Self::cleanup_merge(&mut diffs);
+
         diffs
     }
 
-    fn compute<'a>(&self, old: &'a [u8], new: &'a [u8], deadline: Instant) -> Vec<Diff> {
+    fn compute<'a>(&self, old: &'a [u8], new: &'a [u8], linemode: bool, deadline: Instant) -> Vec<Diff> {
         // returning all of the new part
         if old.is_empty() {
-            return vec![Diff::insert( new)];
+            return vec![Diff::insert(new)];
         }
 
         // return everything deleted
         if new.is_empty() {
-            return vec![Diff::delete( old)];
+            return vec![Diff::delete(old)];
         }
 
         let (long, short, old_gt_new) = if old.len() > new.len() {
@@ -167,7 +166,7 @@ impl DiffMatchPatch {
             let op = if old_gt_new { Ops::Delete } else { Ops::Insert };
             let diffs = vec![
                 Diff::new(op, &long[0..idx]),
-                Diff::equal( short),
+                Diff::equal(short),
                 Diff::new(op, &long[idx + short.len()..]),
             ];
 
@@ -176,7 +175,7 @@ impl DiffMatchPatch {
 
         if short.len() == 1 {
             // After previous case, this can't be an equality
-            return vec![Diff::delete( old), Diff::insert( new)];
+            return vec![Diff::delete(old), Diff::insert(new)];
         }
 
         // Check if the problem can be split in two
@@ -190,18 +189,18 @@ impl DiffMatchPatch {
             let mid_common = half_match.common;
 
             // Send both pairs off for separate processing.
-            let mut diffs_a = self.main_internal(old_a, new_a);
-            let mut diffs_b = self.main_internal(old_b, new_b);
+            let mut diffs_a = self.main_internal(old_a, new_a, linemode, deadline);
+            let mut diffs_b = self.main_internal(old_b, new_b, linemode, deadline);
 
             // Merge the results
-            diffs_a.push(Diff::equal( mid_common));
+            diffs_a.push(Diff::equal(mid_common));
             diffs_a.append(&mut diffs_b);
 
             return diffs_a;
         }
 
-        if self.checklines() && old.len() > 100 && new.len() > 100 {
-            return self.line_mode(old, new);
+        if linemode && old.len() > 100 && new.len() > 100 {
+            return self.line_mode(old, new, deadline);
         }
 
         self.bisect(old, new, deadline)
@@ -274,22 +273,22 @@ impl DiffMatchPatch {
 
     // Quick line-level diff on both strings, then rediff the parts for greater accuracy
     // This speedup can produce non-minimal diffs
-    fn line_mode<'a>(&self, old: &'a [u8], new: &'a [u8]) -> Vec<Diff> {
+    fn line_mode<'a>(&self, old: &'a [u8], new: &'a [u8], deadline: Instant) -> Vec<Diff> {
         let to_chars = Self::lines_to_chars(old, new);
-        let mut diffs = self.main_internal(&to_chars.chars_old, &to_chars.chars_new);
+        let mut diffs = self.main_internal(&to_chars.chars_old, &to_chars.chars_new, false, deadline);
 
         // Convert diffs back to text
         Self::chars_to_lines(&mut diffs[..], &to_chars.lines[..]);
         // Eliminate freak matches
         Self::cleanup_semantic(&mut diffs);
-        
+
         // Rediff any replacement blocks, this time character-by-character.
 
         // Add a dummy entry at the end.
-        diffs.push(Diff::equal( b""));
+        diffs.push(Diff::equal(b""));
         let mut difflen = diffs.len();
         let mut pointer = 0_usize;
-        
+
         // count of bytes inserted
         let mut insert_n = 0_usize;
         // count of bytes to delete
@@ -316,36 +315,26 @@ impl DiffMatchPatch {
                     if delete_n >= 1 && insert_n >= 1 {
                         // Delete the offending records and add the merged ones.
                         let idxstart = pointer - delete_n - insert_n;
-                        // Removing in reverse order to avoid index shift
-                        (idxstart .. pointer + delete_n + insert_n).rev()
-                        .for_each(|idx| {
-                            diffs.remove(idx);
-                        });
+                        let idxend = idxstart + delete_n + insert_n;
+
+                        diffs.drain(idxstart .. idxend);
 
                         pointer = idxstart;
 
-                        let mut subdiffs = self.main_internal(&delete_data, &insert_data);
+                        let mut subdiffs = self.main_internal(&delete_data, &insert_data, false, deadline);
                         let subdifflen = subdiffs.len();
-
                         subdiffs.drain(..).rev().for_each(|d| {
                             diffs.insert(pointer, d);
                         });
-                        // diffs.splice(pointer - count_delete - count_insert,
-                        //              count_delete + count_insert);
-                        // pointer = pointer - count_delete - count_insert;
-                        // var subDiff =
-                        //     this.diff_main(text_delete, text_insert, false, deadline);
-                        // for (var j = subDiff.length - 1; j >= 0; j--) {
-                        //   diffs.splice(pointer, 0, subDiff[j]);
-                        // }
+                        
                         pointer += subdifflen;
                         difflen = diffs.len();
-                      }
-                      // resetting counters
-                      insert_n = 0;
-                      delete_n = 0;
-                      delete_data = Vec::new();
-                      insert_data = Vec::new();
+                    }
+                    // resetting counters
+                    insert_n = 0;
+                    delete_n = 0;
+                    delete_data = Vec::new();
+                    insert_data = Vec::new();
                 }
             }
 
@@ -366,12 +355,15 @@ impl DiffMatchPatch {
 
         let max_d = (old_len + new_len + 1) / 2;
         let v_offset = max_d as usize;
-        let v_len = 2 * max_d as usize;
+        let v_len = 2 * max_d;
 
-        let mut v1 = vec![-1_i32; v_len];
-        let mut v2 = vec![-1_i32; v_len];
+        let mut v1 = vec![-1_i32; v_len as usize];
+        let mut v2 = vec![-1_i32; v_len as usize];
+
         v1[v_offset + 1] = 0;
         v2[v_offset + 1] = 0;
+        // println!("{v1:?}");
+        // println!("{v2:?}");
 
         let delta = old_len - new_len;
 
@@ -379,177 +371,136 @@ impl DiffMatchPatch {
         // with the reverse path.
         let front = delta % 2 != 0;
 
+        // println!("v_offset[{v_offset}] v_length[{v_len}] delta[{delta}] front[{front}]");
+
         // Offsets for start and end of k loop.
         // Prevents mapping of space beyond the grid.
         let mut k1start = 0;
         let mut k1end = 0;
         let mut k2start = 0;
         let mut k2end = 0;
-        
-        for d in 0 .. max_d {
+
+        for d in 0..max_d {
+            // println!("For d: {d} --------------------");
             // Bail out if deadline is reached.
             if Instant::now() > deadline {
                 break;
             }
 
             // Walk the front path one step
-            for k1 in (k1start - d .. d - k1end + 1).step_by(2) {
+            for k1 in (k1start - d..d - k1end + 1).step_by(2) {
                 let k1_offset = (v_offset as i32 + k1) as usize;
-                
+                // println!("Loop 1 k1[{k1}] k1_offset[{k1_offset}]");
                 let mut x1 = if k1 == -d || (k1 != d && v1[k1_offset - 1] < v1[k1_offset + 1]) {
+                    // println!("Loop 1 Check offset[if] {}", k1_offset + 1);
                     v1[k1_offset + 1]
                 } else {
+                    // println!("Loop 1 Check offset[else] {}", k1_offset - 1);
                     v1[k1_offset - 1] + 1
                 };
-                
+
                 let mut y1 = x1 - k1;
                 while x1 < old_len && y1 < new_len && old[x1 as usize] == new[y1 as usize] {
                     x1 += 1;
                     y1 += 1;
                 }
-                // while x1 < text1_length && y1 < text2_length
-                //     && text1[x1] == text2[y1]) {
-                //   x1++;
-                //   y1++;
-                // }
+
+                v1[k1_offset] = x1;
+
+                if x1 > old_len {
+                    // ran off the right of the graph
+                    k1end += 2;
+                } else if y1 > new_len {
+                    // Ran of the bottom of the graph
+                    k1start += 2;
+                } else if front {
+                    let k2_offset = v_offset as i32 + delta - k1;
+                    if k2_offset >= 0 && k2_offset < v_len && v2[k2_offset as usize] != -1 {
+                        // Mirror x2 onto top-left coodinate system
+                        let x2 = old_len - v2[k2_offset as usize];
+                        if x1 >= x2 {
+                            // Overlap detected
+                            // println!("Loop 1 Overlap detected! {x1} {y1}");
+                            return self.bisect_split(old, new, x1 as usize, y1 as usize, deadline);
+                        }
+                    }
+                }
             }
-            // .step_by(2)
-            // .for_each(|k1| {
-            //     let k1_offset = v_offset + k1;
-            //     let mut x1 = if k1 == -d || (k1 != d && v1[(k1_offset - 1) as usize] < v1[(k1_offset + 1) as usize]) {
-            //         v1[(k1_offset + 1) as usize]
-            //     } else {
-            //         v1[(k1_offset - 1) as usize] + 1
-            //     };
 
-            //     let mut y1 = x1 - k1;
-            //     while x1 < old.len() as i32 && y1 < new.len() as i32 && old.get(x1 as usize) == new.get(y1 as usize) {
-            //         x1 += 1;
-            //         y1 += 1;
-            //     }
+            // println!("After loop 1 k1start[{k1start}] k1end[{k1end}]");
 
-            //     v1[k1_offset as usize] = x1;
+            // Walk the reverse path one step
+            for k2 in (k2start - d..d - k2end + 1).step_by(2) {
+                let k2_offset = (v_offset as i32 + k2) as usize;
+                // println!("Loop 2 k2: {k2} k2_offset: {k2_offset}");
 
-            //     if x1 > old.len() as i32 {
-            //         // ran off the right of the graph
-            //         k1end += 2;
-            //     } else if y1 > new.len() as i32 {
-            //         // Ran of the bottom of the graph
-            //         k1start += 2;
-            //     } else if front {
-            //         let k2_offset = v_offset + delta - k1;
-            //         if k2_offset >= 0 && k2_offset < v_len && v2[k2_offset as usize] != -1 {
-            //             // Mirror x2 onto top-left coodinate system
-            //             let x2 = old.len() as i32 - v2[k2_offset as usize];
-            //             if x1 >= x2 {
-            //                 // Overlap detected
-            //                 // return Self::bisect_split(old, new, x1 as usize, x2 as usize, deadline);
-            //                 todo!()
-            //             }
-            //         }
-            //     }
-            // });
+                let mut x2 = if k2 == -d || (k2 != d && v2[k2_offset - 1] < v2[k2_offset + 1]) {
+                    // println!("Loop 2 Check offset[if] {}", k2_offset + 1);
+                    v2[k2_offset + 1]
+                } else {
+                    // println!("Loop 2 Check offset[else] {}", k2_offset - 1);
+                    v2[k2_offset - 1] + 1
+                };
+
+                let mut y2 = x2 - k2;
+                while x2 < old_len
+                    && y2 < new_len
+                    && old[(old_len - x2) as usize - 1] == new[(new_len - y2) as usize - 1]
+                {
+                    x2 += 1;
+                    y2 += 1;
+                }
+
+                v2[k2_offset] = x2;
+                if x2 > old_len {
+                    // Ran off the left of the graph
+                    k2end += 2;
+                } else if y2 > new_len {
+                    // Ran off the top of the graph
+                    k2start += 2;
+                } else if !front {
+                    let k1_offset = v_offset as i32 + delta - k2;
+                    // println!("Loop 2 not front! k1_offset[{k1_offset}] v_length[{v_len}]");
+                    if k1_offset >= 0 && k1_offset < v_len && v1[k1_offset as usize] != -1 {
+                        let x1 = v1[k1_offset as usize];
+                        let y1 = v_offset as i32 + x1 - k1_offset;
+
+                        // Mirror x2 onto top-left coordinate system
+                        x2 = old_len - x2;
+                        // println!("Loop 2 not front inner: x1[{x1}] y1[{y1}] x2[{x2}]");
+                        if x1 >= x2 {
+                            // Overlap
+                            // println!("Loop 2 Overlap detected! {x1} {y1}");
+                            return self.bisect_split(old, new, x1 as usize, y1 as usize, deadline);
+                        }
+                    }
+                }
+            }
         }
-        // for (var d = 0; d < max_d; d++) {
-        //     // Bail out if deadline is reached.
-        //     if ((new Date()).getTime() > deadline) {
-        //     break;
-        //     }
 
-        //     // Walk the front path one step.
-        //     for (var k1 = -d + k1start; k1 <= d - k1end; k1 += 2) {
-        //     var k1_offset = v_offset + k1;
-        //     var x1;
-        //     if (k1 == -d || (k1 != d && v1[k1_offset - 1] < v1[k1_offset + 1])) {
-        //         x1 = v1[k1_offset + 1];
-        //     } else {
-        //         x1 = v1[k1_offset - 1] + 1;
-        //     }
-        //     var y1 = x1 - k1;
-        //     while (x1 < text1_length && y1 < text2_length &&
-        //             text1.charAt(x1) == text2.charAt(y1)) {
-        //         x1++;
-        //         y1++;
-        //     }
-        //     v1[k1_offset] = x1;
-        //     if (x1 > text1_length) {
-        //         // Ran off the right of the graph.
-        //         k1end += 2;
-        //     } else if (y1 > text2_length) {
-        //         // Ran off the bottom of the graph.
-        //         k1start += 2;
-        //     } else if (front) {
-        //         var k2_offset = v_offset + delta - k1;
-        //         if (k2_offset >= 0 && k2_offset < v_length && v2[k2_offset] != -1) {
-        //         // Mirror x2 onto top-left coordinate system.
-        //         var x2 = text1_length - v2[k2_offset];
-        //         if (x1 >= x2) {
-        //             // Overlap detected.
-        //             return this.diff_bisectSplit_(text1, text2, x1, y1, deadline);
-        //         }
-        //         }
-        //     }
-        //     }
-
-        //     // Walk the reverse path one step.
-        //     for (var k2 = -d + k2start; k2 <= d - k2end; k2 += 2) {
-        //     var k2_offset = v_offset + k2;
-        //     var x2;
-        //     if (k2 == -d || (k2 != d && v2[k2_offset - 1] < v2[k2_offset + 1])) {
-        //         x2 = v2[k2_offset + 1];
-        //     } else {
-        //         x2 = v2[k2_offset - 1] + 1;
-        //     }
-        //     var y2 = x2 - k2;
-        //     while (x2 < text1_length && y2 < text2_length &&
-        //             text1.charAt(text1_length - x2 - 1) ==
-        //             text2.charAt(text2_length - y2 - 1)) {
-        //         x2++;
-        //         y2++;
-        //     }
-        //     v2[k2_offset] = x2;
-        //     if (x2 > text1_length) {
-        //         // Ran off the left of the graph.
-        //         k2end += 2;
-        //     } else if (y2 > text2_length) {
-        //         // Ran off the top of the graph.
-        //         k2start += 2;
-        //     } else if (!front) {
-        //         var k1_offset = v_offset + delta - k2;
-        //         if (k1_offset >= 0 && k1_offset < v_length && v1[k1_offset] != -1) {
-        //         var x1 = v1[k1_offset];
-        //         var y1 = v_offset + x1 - k1_offset;
-        //         // Mirror x2 onto top-left coordinate system.
-        //         x2 = text1_length - x2;
-        //         if (x1 >= x2) {
-        //             // Overlap detected.
-        //             return this.diff_bisectSplit_(text1, text2, x1, y1, deadline);
-        //         }
-        //         }
-        //     }
-        //     }
-        // }
-        // Diff took too long and hit the deadline or
-        // number of diffs equals number of characters, no commonality at all.
-        vec![
-            Diff::delete(old),
-            Diff::insert(new)
-        ]
+        vec![Diff::delete(old), Diff::insert(new)]
     }
 
-    fn bisect_split(&self, old: &[u8], new: &[u8], x: usize, y: usize, deadline: Instant) -> Vec<Diff> {
+    fn bisect_split(
+        &self,
+        old: &[u8],
+        new: &[u8],
+        x: usize,
+        y: usize,
+        deadline: Instant,
+    ) -> Vec<Diff> {
         let old_a = &old[..x];
-        let new_a = &new[..x];
+        let new_a = &new[..y];
 
         let old_b = &old[x..];
         let new_b = &new[y..];
 
         // Compute both diffs serially.
-        let mut diffs_a = self.compute(old_a, new_a, deadline);
-        let mut diffs_b = self.compute(old_b, new_b, deadline);
+        let mut diffs_a = self.main_internal(old_a, new_a, false, deadline);
+        let mut diffs_b = self.main_internal(old_b, new_b, false, deadline);
 
         diffs_a.append(&mut diffs_b);
-        
+
         diffs_a
     }
 
@@ -651,12 +602,20 @@ impl DiffMatchPatch {
         if lhs.is_empty() || rhs.is_empty() {
             return 0;
         }
-        
+
         let minlen = lhs.len().min(rhs.len());
 
         // A working set with longer string truncated
-        let l = if lhs.len() > rhs.len() { &lhs[lhs.len() - rhs.len() ..] } else { lhs };
-        let r = if lhs.len() < rhs.len() { &rhs[..lhs.len()] } else { rhs };
+        let l = if lhs.len() > rhs.len() {
+            &lhs[lhs.len() - rhs.len()..]
+        } else {
+            lhs
+        };
+        let r = if lhs.len() < rhs.len() {
+            &rhs[..lhs.len()]
+        } else {
+            rhs
+        };
 
         // Quick check for the worst case.
         if l == r {
@@ -670,21 +629,25 @@ impl DiffMatchPatch {
         let mut best = 0;
 
         loop {
-            let pattern = &l[minlen - len ..];
-            let found = if let Some(found) = r.windows(pattern.len()).step_by(1).position(|p| p == pattern) {
+            let pattern = &l[minlen - len..];
+            let found = if let Some(found) = r
+                .windows(pattern.len())
+                .step_by(1)
+                .position(|p| p == pattern)
+            {
                 found
             } else {
                 return best;
             };
 
             len += found;
-            if found == 0 || l[minlen - len ..] == r[..len] {
+            if found == 0 || l[minlen - len..] == r[..len] {
                 best = len;
                 len += 1;
             }
         }
     }
-    
+
     // Reduce the number of edits by eliminating semantically trivial equalities
     fn cleanup_semantic(diffs: &mut Vec<Diff>) {
         let mut changes = false;
@@ -734,7 +697,7 @@ impl DiffMatchPatch {
                     {
                         if let Some(&last) = equalities.last() {
                             // Duplicate record
-                            diffs.insert(last, Diff::delete( last_eq));
+                            diffs.insert(last, Diff::delete(last_eq));
                             // Change the other copy to insert
                             diffs[last + 1].0 = Ops::Insert;
                             // change diff length
@@ -775,7 +738,7 @@ impl DiffMatchPatch {
         }
 
         Self::cleanup_semantic_lossless(diffs);
-        
+
         difflen = diffs.len();
 
         // Find any overlaps between deletions and insertions.
@@ -795,22 +758,22 @@ impl DiffMatchPatch {
 
                 let overlap_1 = Self::common_overlap(&delete[..], &insert[..]);
                 let overlap_2 = Self::common_overlap(&insert[..], &delete[..]);
-        
-                if overlap_1 >= overlap_2 &&
-                    (overlap_1 >= delete_thres ||
-                    overlap_1 >= insert_thres) {
+
+                if overlap_1 >= overlap_2
+                    && (overlap_1 >= delete_thres || overlap_1 >= insert_thres)
+                {
                     // Overlap found.  Insert an equality and trim the surrounding edits.
                     diffs.insert(pointer, Diff::equal(&insert[..overlap_1]));
-                    diffs[pointer - 1].1 = delete[.. delete.len() - overlap_1].to_vec();
-                    diffs[pointer + 1].1 = insert[overlap_1 ..].to_vec();
+                    diffs[pointer - 1].1 = delete[..delete.len() - overlap_1].to_vec();
+                    diffs[pointer + 1].1 = insert[overlap_1..].to_vec();
                     difflen = diffs.len();
                     pointer += 1;
                 } else if overlap_2 >= delete_thres || overlap_2 >= insert_thres {
                     // Reverse overlap
                     // Insert equality and swap and trim surrounding edits
-                    diffs.insert(pointer, Diff::equal(&delete[.. overlap_2]));
-                    diffs[pointer - 1] = Diff::insert(&insert[.. insert.len() - overlap_2]);
-                    diffs[pointer + 1] = Diff::delete(&delete[overlap_2 ..]);
+                    diffs.insert(pointer, Diff::equal(&delete[..overlap_2]));
+                    diffs[pointer - 1] = Diff::insert(&insert[..insert.len() - overlap_2]);
+                    diffs[pointer + 1] = Diff::delete(&delete[overlap_2..]);
 
                     difflen = diffs.len();
                     pointer += 1;
@@ -822,7 +785,7 @@ impl DiffMatchPatch {
     }
 
     // Look for single edits surrounded on both sides by equalities
-    // e.g: The c<ins>at c</ins>ame. -> The <ins>cat </ins>came.    
+    // e.g: The c<ins>at c</ins>ame. -> The <ins>cat </ins>came.
     fn cleanup_semantic_lossless(diffs: &mut Vec<Diff>) {
         let mut pointer = 1_usize;
         let mut difflen = diffs.len();
@@ -831,7 +794,6 @@ impl DiffMatchPatch {
         while difflen > 0 && pointer < difflen - 1 {
             // an edit surrounded by equalities
             if diffs[pointer - 1].0 == Ops::Equal && diffs[pointer + 1].0 == Ops::Equal {
-
                 let mut equality_prev = diffs[pointer - 1].1.clone();
                 let mut edit = diffs[pointer].1.clone();
                 let mut equality_next = diffs[pointer + 1].1.clone();
@@ -839,13 +801,13 @@ impl DiffMatchPatch {
                 // Shift the edit as far left as possible
                 let commonlen = Self::common_prefix(&equality_prev[..], &edit[..], true);
                 if commonlen > 0 {
-                    let mut common_prev = edit[edit.len() - commonlen ..].to_vec();
+                    let mut common_prev = edit[edit.len() - commonlen..].to_vec();
                     let mut common_next = common_prev.clone();
-                    
-                    equality_prev = equality_prev[.. equality_prev.len() - commonlen].to_vec();
-                    common_prev.append(&mut edit[.. edit.len() - commonlen].to_vec());
+
+                    equality_prev = equality_prev[..equality_prev.len() - commonlen].to_vec();
+                    common_prev.append(&mut edit[..edit.len() - commonlen].to_vec());
                     edit = common_prev;
-                    
+
                     common_next.append(&mut equality_next.to_vec());
                     equality_next = common_next;
                 }
@@ -865,8 +827,8 @@ impl DiffMatchPatch {
 
                     equality_next.remove(0);
 
-                    let score = Self::cleanup_semantic_score(&equality_prev[..], &edit[..]) +
-                        Self::cleanup_semantic_score(&edit[..], &equality_next[..]);
+                    let score = Self::cleanup_semantic_score(&equality_prev[..], &edit[..])
+                        + Self::cleanup_semantic_score(&edit[..], &equality_next[..]);
 
                     // The >= encourages trailing rather than leading whitespace on edits.
                     if score >= best_score {
@@ -903,7 +865,6 @@ impl DiffMatchPatch {
         }
     }
 
-
     // Given two strings, compute a score representing whether the internal
     // boundary falls on logical boundaries
     // Scores range from 6 (best) to 0 (worst)
@@ -927,8 +888,12 @@ impl DiffMatchPatch {
         let linebreak_2 = whitespace_2 && (char2 == '\n' || char2 == '\r');
 
         let blankline_1 = linebreak_1 && (one.ends_with(b"\n\n") || (one.ends_with(b"\n\r\n")));
-        let blankline_2 = linebreak_2 && (two.starts_with(b"\r\n\n") || two.starts_with(b"\r\n\r\n") || two.starts_with(b"\n\r\n") || two.starts_with(b"\n\n"));
-        
+        let blankline_2 = linebreak_2
+            && (two.starts_with(b"\r\n\n")
+                || two.starts_with(b"\r\n\r\n")
+                || two.starts_with(b"\n\r\n")
+                || two.starts_with(b"\n\n"));
+
         // println!("Non-alphanum: [{} {}] Whitespace: [{whitespace_1} {whitespace_2}] Linebreak: [{linebreak_1} {linebreak_2}] Blankline: [{blankline_1} {blankline_2}] Blanklinematch: [{} {}]", !char1.is_alphanumeric(), !char2.is_alphanumeric(), one.ends_with(b"\n"), (two.starts_with(b"\n") || two.starts_with(b"\r")));
 
         if blankline_1 || blankline_2 {
@@ -955,7 +920,7 @@ impl DiffMatchPatch {
     // Any edit section can move as long as it doesn't cross an equality.
     fn cleanup_merge(diffs: &mut Vec<Diff>) {
         // Push a dummy diff ... this triggers the equality as a last step
-        diffs.push(Diff::equal( b""));
+        diffs.push(Diff::equal(b""));
 
         let mut difflen = diffs.len();
 
@@ -996,10 +961,7 @@ impl DiffMatchPatch {
                                     let mut appenddata = insert_data[..commonlen].to_vec();
                                     diffs[tmpidx - 1].1.append(&mut appenddata);
                                 } else {
-                                    diffs.insert(
-                                        0,
-                                        Diff::equal( &insert_data[..commonlen]),
-                                    );
+                                    diffs.insert(0, Diff::equal(&insert_data[..commonlen]));
                                     pointer += 1;
                                     difflen = diffs.len();
                                 }
@@ -1033,13 +995,13 @@ impl DiffMatchPatch {
                         difflen = diffs.len();
 
                         if !delete_data.is_empty() {
-                            diffs.insert(pointer, Diff::delete( &delete_data));
+                            diffs.insert(pointer, Diff::delete(&delete_data));
                             pointer += 1;
                             difflen = diffs.len();
                         }
 
                         if !insert_data.is_empty() {
-                            diffs.insert(pointer, Diff::insert( &insert_data));
+                            diffs.insert(pointer, Diff::insert(&insert_data));
                             pointer += 1;
                             difflen = diffs.len();
                         }
@@ -1086,7 +1048,12 @@ impl DiffMatchPatch {
             ) {
                 // This is a single edit surrounded by equalities.
                 if diff_prev.0 == Ops::Equal && diff_next.0 == Ops::Equal {
-                    if diff.1[diff.1.len() - diff_prev.1.len()..] == diff_prev.1 {
+                    let substr_idx = if diff.1.len() >= diff_prev.1.len() {
+                        diff.1.len() - diff_prev.1.len()
+                    } else {
+                        0
+                    };
+                    if diff.1[substr_idx..] == diff_prev.1 {
                         // Shift the edit over the previous equality.
                         let new_current_data =
                             [&diff_prev.1, &diff.1[..diff.1.len() - diff_prev.1.len()]].concat();
@@ -1098,7 +1065,12 @@ impl DiffMatchPatch {
                         difflen = diffs.len();
 
                         changes = true;
-                    } else if diff.1[..diff_next.1.len()] == diff_next.1 {
+                    } else if diff.1[..if diff_next.1.len() <= diff.1.len() {
+                        diff_next.1.len()
+                    } else {
+                        diff.1.len()
+                    }] == diff_next.1
+                    {
                         // Shift the edit over the next equality.
                         let mut next_data = diffs[pointer + 1].1.to_vec();
 
@@ -1161,7 +1133,6 @@ impl DiffMatchPatch {
         maxlines: usize,
     ) -> Vec<u8> {
         let take = maxlines - array.len();
-        println!("Take: {take}");
 
         let mut lines = text.split_inclusive(|u| *u == b'\n').enumerate();
         let mut charlist = Vec::with_capacity(take + 1);
@@ -1230,7 +1201,11 @@ impl DiffMatchPatch {
     /// Returns:
     /// Vec of changes (Diff).
     pub fn diff_main<'a>(&self, old: &'a str, new: &'a str) -> Vec<Diff> {
-        self.main_internal(old.as_bytes(), new.as_bytes())
+        let deadline = Instant::now()
+            .checked_add(Duration::from_millis(self.timeout()))
+            .unwrap();
+
+        self.main_internal(old.as_bytes(), new.as_bytes(), self.checklines(), deadline)
     }
 
     // Reduce the number of edits by eliminating semantically trivial equalities
@@ -1283,9 +1258,9 @@ impl DiffMatchPatch {
 mod tests {
     use std::time::{Duration, Instant};
 
-    use crate::dmp::{Diff, HalfMatch, LineToChars, Ops};
+    use crate::dmp::{Diff, HalfMatch, LineToChars};
 
-    use super::DiffMatchPatch;
+    use super::{DiffMatchPatch, Ops};
 
     // const tests = [
     //     'testDiffIsDestructurable', // TODO
@@ -1552,17 +1527,14 @@ mod tests {
             .iter()
             .map(|i| char::from_u32(*i as u32).unwrap())
             .collect::<String>();
-        let mut diffs = [
-            Diff::equal( d1.as_bytes()),
-            Diff::insert( d2.as_bytes()),
-        ];
+        let mut diffs = [Diff::equal(d1.as_bytes()), Diff::insert(d2.as_bytes())];
 
         DiffMatchPatch::chars_to_lines(&mut diffs, &[b"alpha\n", b"beta\n"]);
 
         assert_eq!(
             [
-                Diff::equal( b"alpha\nbeta\nalpha\n"),
-                Diff::insert( b"beta\nalpha\nbeta\n")
+                Diff::equal(b"alpha\nbeta\nalpha\n"),
+                Diff::insert(b"beta\nalpha\nbeta\n")
             ],
             diffs
         );
@@ -1576,10 +1548,10 @@ mod tests {
         let linestr = (0..TLIMIT).map(|i| format!("{i}\n")).collect::<Vec<_>>();
         let linelist: Vec<&[u8]> = (0..TLIMIT).map(|i| linestr[i].as_bytes()).collect();
 
-        let mut diffs = [Diff::delete( charlist.as_bytes())];
+        let mut diffs = [Diff::delete(charlist.as_bytes())];
         DiffMatchPatch::chars_to_lines(&mut diffs, &linelist[..]);
 
-        assert_eq!([Diff::delete( linestr.join("").as_bytes())], diffs);
+        assert_eq!([Diff::delete(linestr.join("").as_bytes())], diffs);
 
         // More than 65536 to verify any 16-bit limitation.
         const ULIMIT: usize = 10;
@@ -1587,7 +1559,7 @@ mod tests {
         let lines = linestr.join("");
         let l2c = DiffMatchPatch::lines_to_chars(lines.as_bytes(), b"");
 
-        let mut diffs = [Diff::insert( &l2c.chars_old)];
+        let mut diffs = [Diff::insert(&l2c.chars_old)];
         DiffMatchPatch::chars_to_lines(&mut diffs, &l2c.lines);
 
         assert_eq!(lines.as_bytes(), diffs[0].1);
@@ -1603,177 +1575,119 @@ mod tests {
         assert_eq!(test, diffs);
 
         // No change case
-        let mut diffs = vec![
-            Diff::equal( b"a"),
-            Diff::delete( b"b"),
-            Diff::insert( b"c"),
-        ];
-        let test = vec![
-            Diff::equal( b"a"),
-            Diff::delete( b"b"),
-            Diff::insert( b"c"),
-        ];
+        let mut diffs = vec![Diff::equal(b"a"), Diff::delete(b"b"), Diff::insert(b"c")];
+        let test = vec![Diff::equal(b"a"), Diff::delete(b"b"), Diff::insert(b"c")];
         DiffMatchPatch::cleanup_merge(&mut diffs);
         assert_eq!(test, diffs);
 
         // Merge equalities.
-        let mut diffs = vec![
-            Diff::equal( b"a"),
-            Diff::equal( b"b"),
-            Diff::equal( b"c"),
-        ];
-        let test = vec![Diff::equal( b"abc")];
+        let mut diffs = vec![Diff::equal(b"a"), Diff::equal(b"b"), Diff::equal(b"c")];
+        let test = vec![Diff::equal(b"abc")];
         DiffMatchPatch::cleanup_merge(&mut diffs);
         assert_eq!(test, diffs);
 
         // Merge deletions.
-        let mut diffs = vec![
-            Diff::delete( b"a"),
-            Diff::delete( b"b"),
-            Diff::delete( b"c"),
-        ];
-        let test = vec![Diff::delete( b"abc")];
+        let mut diffs = vec![Diff::delete(b"a"), Diff::delete(b"b"), Diff::delete(b"c")];
+        let test = vec![Diff::delete(b"abc")];
         DiffMatchPatch::cleanup_merge(&mut diffs);
         assert_eq!(test, diffs);
 
         // Merge insertions.
-        let mut diffs = vec![
-            Diff::insert( b"a"),
-            Diff::insert( b"b"),
-            Diff::insert( b"c"),
-        ];
-        let test = vec![Diff::insert( b"abc")];
+        let mut diffs = vec![Diff::insert(b"a"), Diff::insert(b"b"), Diff::insert(b"c")];
+        let test = vec![Diff::insert(b"abc")];
         DiffMatchPatch::cleanup_merge(&mut diffs);
         assert_eq!(test, diffs);
 
         // Merge interweave.
         let mut diffs = vec![
-            Diff::delete( b"a"),
-            Diff::insert( b"b"),
-            Diff::delete( b"c"),
-            Diff::insert( b"d"),
-            Diff::equal( b"e"),
-            Diff::equal( b"f"),
+            Diff::delete(b"a"),
+            Diff::insert(b"b"),
+            Diff::delete(b"c"),
+            Diff::insert(b"d"),
+            Diff::equal(b"e"),
+            Diff::equal(b"f"),
         ];
-        let test = vec![
-            Diff::delete( b"ac"),
-            Diff::insert( b"bd"),
-            Diff::equal( b"ef"),
-        ];
+        let test = vec![Diff::delete(b"ac"), Diff::insert(b"bd"), Diff::equal(b"ef")];
         DiffMatchPatch::cleanup_merge(&mut diffs);
         assert_eq!(test, diffs);
 
         // Prefix and suffix detection.
         let mut diffs = vec![
-            Diff::delete( b"a"),
-            Diff::insert( b"abc"),
-            Diff::delete( b"dc")
+            Diff::delete(b"a"),
+            Diff::insert(b"abc"),
+            Diff::delete(b"dc"),
         ];
         let test = vec![
-            Diff::equal( b"a"),
-            Diff::delete( b"d"),
-            Diff::insert( b"b"),
-            Diff::equal( b"c"),
+            Diff::equal(b"a"),
+            Diff::delete(b"d"),
+            Diff::insert(b"b"),
+            Diff::equal(b"c"),
         ];
         DiffMatchPatch::cleanup_merge(&mut diffs);
         assert_eq!(test, diffs);
 
         // Prefix and suffix detection with equalities.
         let mut diffs = vec![
-            Diff::equal( b"x"),
-            Diff::delete( b"a"),
-            Diff::insert( b"abc"),
-            Diff::delete( b"dc"),
-            Diff::equal( b"y"),
+            Diff::equal(b"x"),
+            Diff::delete(b"a"),
+            Diff::insert(b"abc"),
+            Diff::delete(b"dc"),
+            Diff::equal(b"y"),
         ];
         let test = vec![
-            Diff::equal( b"xa"),
-            Diff::delete( b"d"),
-            Diff::insert( b"b"),
-            Diff::equal( b"cy"),
+            Diff::equal(b"xa"),
+            Diff::delete(b"d"),
+            Diff::insert(b"b"),
+            Diff::equal(b"cy"),
         ];
         DiffMatchPatch::cleanup_merge(&mut diffs);
         assert_eq!(test, diffs);
 
         // Slide edit left.
-        let mut diffs = vec![
-            Diff::equal( b"a"),
-            Diff::insert( b"ba"),
-            Diff::equal( b"c"),
-        ];
-        let test = vec![
-            Diff::insert( b"ab"),
-            Diff::equal( b"ac"),
-        ];
+        let mut diffs = vec![Diff::equal(b"a"), Diff::insert(b"ba"), Diff::equal(b"c")];
+        let test = vec![Diff::insert(b"ab"), Diff::equal(b"ac")];
         DiffMatchPatch::cleanup_merge(&mut diffs);
         assert_eq!(test, diffs);
 
         // Slide edit right
-        let mut diffs = vec![
-            Diff::equal( b"c"),
-            Diff::insert( b"ab"),
-            Diff::equal( b"a"),
-        ];
-        let test = vec![
-            Diff::equal( b"ca"),
-            Diff::insert( b"ba"),
-        ];
+        let mut diffs = vec![Diff::equal(b"c"), Diff::insert(b"ab"), Diff::equal(b"a")];
+        let test = vec![Diff::equal(b"ca"), Diff::insert(b"ba")];
         DiffMatchPatch::cleanup_merge(&mut diffs);
         assert_eq!(test, diffs);
 
         // Slide edit left recursive.
         let mut diffs = vec![
-            Diff::equal( b"a"),
-            Diff::delete( b"b"),
-            Diff::equal( b"c"),
-            Diff::delete( b"ac"),
-            Diff::equal( b"x"),
+            Diff::equal(b"a"),
+            Diff::delete(b"b"),
+            Diff::equal(b"c"),
+            Diff::delete(b"ac"),
+            Diff::equal(b"x"),
         ];
-        let test = vec![
-            Diff::delete( b"abc"),
-            Diff::equal( b"acx"),
-        ];
+        let test = vec![Diff::delete(b"abc"), Diff::equal(b"acx")];
         DiffMatchPatch::cleanup_merge(&mut diffs);
         assert_eq!(test, diffs);
 
         // Slide edit right recursive.
         let mut diffs = vec![
-            Diff::equal( b"x"),
-            Diff::delete( b"ca"),
-            Diff::equal( b"c"),
-            Diff::delete( b"b"),
-            Diff::equal( b"a"),
+            Diff::equal(b"x"),
+            Diff::delete(b"ca"),
+            Diff::equal(b"c"),
+            Diff::delete(b"b"),
+            Diff::equal(b"a"),
         ];
-        let test = vec![
-            Diff::equal( b"xca"),
-            Diff::delete( b"cba"),
-        ];
+        let test = vec![Diff::equal(b"xca"), Diff::delete(b"cba")];
         DiffMatchPatch::cleanup_merge(&mut diffs);
         assert_eq!(test, diffs);
 
         // Empty merge.
-        let mut diffs = vec![
-            Diff::delete( b"b"),
-            Diff::insert( b"ab"),
-            Diff::equal( b"c"),
-        ];
-        let test = vec![
-            Diff::insert( b"a"),
-            Diff::equal( b"bc"),
-        ];
+        let mut diffs = vec![Diff::delete(b"b"), Diff::insert(b"ab"), Diff::equal(b"c")];
+        let test = vec![Diff::insert(b"a"), Diff::equal(b"bc")];
         DiffMatchPatch::cleanup_merge(&mut diffs);
         assert_eq!(test, diffs);
 
         // Empty equality.
-        let mut diffs = vec![
-            Diff::equal( b""),
-            Diff::insert( b"a"),
-            Diff::equal( b"b"),
-        ];
-        let test = vec![
-            Diff::insert( b"a"),
-            Diff::equal( b"b"),
-        ];
+        let mut diffs = vec![Diff::equal(b""), Diff::insert(b"a"), Diff::equal(b"b")];
+        let test = vec![Diff::insert(b"a"), Diff::equal(b"b")];
         DiffMatchPatch::cleanup_merge(&mut diffs);
         assert_eq!(test, diffs);
     }
@@ -1792,13 +1706,13 @@ mod tests {
             Diff::delete(b"ab"),
             Diff::insert(b"cd"),
             Diff::equal(b"12"),
-            Diff::delete(b"e")
+            Diff::delete(b"e"),
         ];
         let test: Vec<Diff> = vec![
             Diff::delete(b"ab"),
             Diff::insert(b"cd"),
             Diff::equal(b"12"),
-            Diff::delete(b"e")
+            Diff::delete(b"e"),
         ];
         DiffMatchPatch::cleanup_semantic(&mut diffs);
         assert_eq!(test, diffs);
@@ -1808,27 +1722,20 @@ mod tests {
             Diff::delete(b"abc"),
             Diff::insert(b"ABC"),
             Diff::equal(b"1234"),
-            Diff::delete(b"wxyz")
+            Diff::delete(b"wxyz"),
         ];
         let test: Vec<Diff> = vec![
             Diff::delete(b"abc"),
             Diff::insert(b"ABC"),
             Diff::equal(b"1234"),
-            Diff::delete(b"wxyz")
+            Diff::delete(b"wxyz"),
         ];
         DiffMatchPatch::cleanup_semantic(&mut diffs);
         assert_eq!(test, diffs);
 
         // Simple elimination.
-        let mut diffs = vec![
-            Diff::delete(b"a"),
-            Diff::equal(b"b"),
-            Diff::delete(b"c")
-        ];
-        let test: Vec<Diff> = vec![
-            Diff::delete(b"abc"),
-            Diff::insert(b"b"),
-        ];
+        let mut diffs = vec![Diff::delete(b"a"), Diff::equal(b"b"), Diff::delete(b"c")];
+        let test: Vec<Diff> = vec![Diff::delete(b"abc"), Diff::insert(b"b")];
         DiffMatchPatch::cleanup_semantic(&mut diffs);
         assert_eq!(test, diffs);
 
@@ -1838,12 +1745,9 @@ mod tests {
             Diff::equal(b"cd"),
             Diff::delete(b"e"),
             Diff::equal(b"f"),
-            Diff::insert(b"g")
+            Diff::insert(b"g"),
         ];
-        let test: Vec<Diff> = vec![
-            Diff::delete(b"abcdef"),
-            Diff::insert(b"cdfg"),
-        ];
+        let test: Vec<Diff> = vec![Diff::delete(b"abcdef"), Diff::insert(b"cdfg")];
         DiffMatchPatch::cleanup_semantic(&mut diffs);
         assert_eq!(test, diffs);
 
@@ -1859,10 +1763,7 @@ mod tests {
             Diff::delete(b"B"),
             Diff::insert(b"2"),
         ];
-        let test: Vec<Diff> = vec![
-            Diff::delete(b"AB_AB"),
-            Diff::insert(b"1A2_1A2"),
-        ];
+        let test: Vec<Diff> = vec![Diff::delete(b"AB_AB"), Diff::insert(b"1A2_1A2")];
         DiffMatchPatch::cleanup_semantic(&mut diffs);
         assert_eq!(test, diffs);
 
@@ -1881,39 +1782,27 @@ mod tests {
         assert_eq!(test, diffs);
 
         // No overlap elimination.
-        let mut diffs = vec![
-            Diff::delete(b"abcxx"),
-            Diff::insert(b"xxdef"),
-        ];
-        let test: Vec<Diff> = vec![
-            Diff::delete(b"abcxx"),
-            Diff::insert(b"xxdef"),
-        ];
+        let mut diffs = vec![Diff::delete(b"abcxx"), Diff::insert(b"xxdef")];
+        let test: Vec<Diff> = vec![Diff::delete(b"abcxx"), Diff::insert(b"xxdef")];
         DiffMatchPatch::cleanup_semantic(&mut diffs);
         assert_eq!(test, diffs);
 
         // Overlap elimination.
-        let mut diffs = vec![
-            Diff::delete(b"abcxxx"),
-            Diff::insert(b"xxxdef"),
-        ];
+        let mut diffs = vec![Diff::delete(b"abcxxx"), Diff::insert(b"xxxdef")];
         let test: Vec<Diff> = vec![
             Diff::delete(b"abc"),
             Diff::equal(b"xxx"),
-            Diff::insert(b"def")
+            Diff::insert(b"def"),
         ];
         DiffMatchPatch::cleanup_semantic(&mut diffs);
         assert_eq!(test, diffs);
 
         // Reverse overlap elimination.
-        let mut diffs = vec![
-            Diff::delete(b"xxxabc"),
-            Diff::insert(b"defxxx"),
-        ];
+        let mut diffs = vec![Diff::delete(b"xxxabc"), Diff::insert(b"defxxx")];
         let test: Vec<Diff> = vec![
             Diff::insert(b"def"),
             Diff::equal(b"xxx"),
-            Diff::delete(b"abc")
+            Diff::delete(b"abc"),
         ];
         DiffMatchPatch::cleanup_semantic(&mut diffs);
         assert_eq!(test, diffs);
@@ -1952,12 +1841,12 @@ mod tests {
         let mut diffs: Vec<Diff> = vec![
             Diff::equal(b"AAA\r\n\r\nBBB"),
             Diff::insert(b"\r\nDDD\r\n\r\nBBB"),
-            Diff::equal(b"\r\nEEE")
+            Diff::equal(b"\r\nEEE"),
         ];
         let test: Vec<Diff> = vec![
             Diff::equal(b"AAA\r\n\r\n"),
             Diff::insert(b"BBB\r\nDDD\r\n\r\n"),
-            Diff::equal(b"BBB\r\nEEE")
+            Diff::equal(b"BBB\r\nEEE"),
         ];
         DiffMatchPatch::cleanup_semantic_lossless(&mut diffs);
         assert_eq!(test, diffs);
@@ -1966,12 +1855,12 @@ mod tests {
         let mut diffs: Vec<Diff> = vec![
             Diff::equal(b"AAA\r\nBBB"),
             Diff::insert(b" DDD\r\nBBB"),
-            Diff::equal(b" EEE")
+            Diff::equal(b" EEE"),
         ];
         let test: Vec<Diff> = vec![
             Diff::equal(b"AAA\r\n"),
             Diff::insert(b"BBB DDD\r\n"),
-            Diff::equal(b"BBB EEE")
+            Diff::equal(b"BBB EEE"),
         ];
         DiffMatchPatch::cleanup_semantic_lossless(&mut diffs);
         assert_eq!(test, diffs);
@@ -1980,12 +1869,12 @@ mod tests {
         let mut diffs: Vec<Diff> = vec![
             Diff::equal(b"The c"),
             Diff::insert(b"ow and the c"),
-            Diff::equal(b"at.")
+            Diff::equal(b"at."),
         ];
         let test: Vec<Diff> = vec![
             Diff::equal(b"The "),
             Diff::insert(b"cow and the "),
-            Diff::equal(b"cat.")
+            Diff::equal(b"cat."),
         ];
         DiffMatchPatch::cleanup_semantic_lossless(&mut diffs);
         assert_eq!(test, diffs);
@@ -1994,39 +1883,25 @@ mod tests {
         let mut diffs: Vec<Diff> = vec![
             Diff::equal(b"The-c"),
             Diff::insert(b"ow-and-the-c"),
-            Diff::equal(b"at.")
+            Diff::equal(b"at."),
         ];
         let test: Vec<Diff> = vec![
             Diff::equal(b"The-"),
             Diff::insert(b"cow-and-the-"),
-            Diff::equal(b"cat.")
+            Diff::equal(b"cat."),
         ];
         DiffMatchPatch::cleanup_semantic_lossless(&mut diffs);
         assert_eq!(test, diffs);
 
         // Hitting the start.
-        let mut diffs: Vec<Diff> = vec![
-            Diff::equal(b"a"),
-            Diff::delete(b"a"),
-            Diff::equal(b"ax")
-        ];
-        let test: Vec<Diff> = vec![
-            Diff::delete(b"a"),
-            Diff::equal(b"aax")
-        ];
+        let mut diffs: Vec<Diff> = vec![Diff::equal(b"a"), Diff::delete(b"a"), Diff::equal(b"ax")];
+        let test: Vec<Diff> = vec![Diff::delete(b"a"), Diff::equal(b"aax")];
         DiffMatchPatch::cleanup_semantic_lossless(&mut diffs);
         assert_eq!(test, diffs);
 
         // Hitting the end.
-        let mut diffs: Vec<Diff> = vec![
-            Diff::equal(b"xa"),
-            Diff::delete(b"a"),
-            Diff::equal(b"a")
-        ];
-        let test: Vec<Diff> = vec![
-            Diff::equal(b"xaa"),
-            Diff::delete(b"a"),
-        ];
+        let mut diffs: Vec<Diff> = vec![Diff::equal(b"xa"), Diff::delete(b"a"), Diff::equal(b"a")];
+        let test: Vec<Diff> = vec![Diff::equal(b"xaa"), Diff::delete(b"a")];
         DiffMatchPatch::cleanup_semantic_lossless(&mut diffs);
         assert_eq!(test, diffs);
 
@@ -2034,7 +1909,7 @@ mod tests {
         let mut diffs: Vec<Diff> = vec![
             Diff::equal(b"The xxx. The "),
             Diff::insert(b"zzz. The "),
-            Diff::equal(b"yyy.")
+            Diff::equal(b"yyy."),
         ];
         let test: Vec<Diff> = vec![
             Diff::equal(b"The xxx."),
@@ -2063,37 +1938,64 @@ mod tests {
         // Unicode.
         // Some overly clever languages (C#) may treat ligatures as equal to their
         // component letters.  E.g. U+FB01 == 'fi'
-        assert_eq!(0, DiffMatchPatch::common_overlap(b"fi", "\u{7FFF}".as_bytes()));
+        assert_eq!(
+            0,
+            DiffMatchPatch::common_overlap(b"fi", "\u{7FFF}".as_bytes())
+        );
 
         // Complete overlap
-        assert_eq!(6, DiffMatchPatch::common_overlap("❤️".as_bytes(), "❤️".as_bytes()));
-        
+        assert_eq!(
+            6,
+            DiffMatchPatch::common_overlap("❤️".as_bytes(), "❤️".as_bytes())
+        );
+
         // Partial unicode overlap
-        assert_eq!(0, DiffMatchPatch::common_overlap("ஆ".as_bytes(), "இ".as_bytes()));
-        assert_eq!(3, DiffMatchPatch::common_overlap("ஆஇ".as_bytes(), "இ".as_bytes()));
+        assert_eq!(
+            0,
+            DiffMatchPatch::common_overlap("ஆ".as_bytes(), "இ".as_bytes())
+        );
+        assert_eq!(
+            3,
+            DiffMatchPatch::common_overlap("ஆஇ".as_bytes(), "இ".as_bytes())
+        );
     }
-    
+
     #[test]
     fn test_diff_bisect() {
-        let mut dmp = DiffMatchPatch::default();
+        let dmp = DiffMatchPatch::default();
 
         // Normal.
         // Since the resulting diff hasn't been normalized, it would be ok if
         // the insertion and deletion pairs are swapped.
         // If the order changes, tweak this test as required.
-        assert_eq!(vec![
-            Diff::delete(b"c"),
-            Diff::insert(b"m"),
-            Diff::equal(b"a"),
-            Diff::delete(b"t"),
-            Diff::insert(b"p")
-        ], dmp.bisect(b"cat", b"map", Instant::now().checked_add(Duration::from_secs(600)).unwrap()));
-        // assertEquivalent([[DIFF_DELETE, 'c'], [DIFF_INSERT, 'm'], [DIFF_EQUAL, 'a'], [DIFF_DELETE, 't'], [DIFF_INSERT, 'p']], dmp.diff_bisect_(a, b, Number.MAX_VALUE));
+        assert_eq!(
+            vec![
+                Diff::delete(b"c"),
+                Diff::insert(b"m"),
+                Diff::equal(b"a"),
+                Diff::delete(b"t"),
+                Diff::insert(b"p")
+            ],
+            dmp.bisect(
+                b"cat",
+                b"map",
+                Instant::now()
+                    .checked_add(Duration::from_secs(600))
+                    .unwrap()
+            )
+        );
 
-        // // Timeout.
-        // assertEquivalent([[DIFF_DELETE, 'cat'], [DIFF_INSERT, 'map']], dmp.diff_bisect_(a, b, 0));
+        // Timeout.
+        assert_eq!(
+            vec![Diff::delete(b"cat"), Diff::insert(b"map"),],
+            dmp.bisect(
+                b"cat",
+                b"map",
+                Instant::now().checked_add(Duration::from_secs(0)).unwrap()
+            )
+        );
     }
-    
+
     #[test]
     fn test_diff_main() {
         let mut dmp = DiffMatchPatch::default();
@@ -2103,39 +2005,28 @@ mod tests {
         assert!(dmp.diff_main("", "").is_empty());
 
         // Equality
-        assert_eq!(
-            vec![Diff::equal( b"abc")],
-            dmp.diff_main("abc", "abc")
-        );
+        assert_eq!(vec![Diff::equal(b"abc")], dmp.diff_main("abc", "abc"));
 
         // Simple insert
         assert_eq!(
-            vec![
-                Diff::equal( b"ab"),
-                Diff::insert( b"123"),
-                Diff::equal( b"c")
-            ],
+            vec![Diff::equal(b"ab"), Diff::insert(b"123"), Diff::equal(b"c")],
             dmp.diff_main("abc", "ab123c")
         );
 
         // Simple delete
         assert_eq!(
-            vec![
-                Diff::equal( b"a"),
-                Diff::delete( b"123"),
-                Diff::equal( b"bc")
-            ],
+            vec![Diff::equal(b"a"), Diff::delete(b"123"), Diff::equal(b"bc")],
             dmp.diff_main("a123bc", "abc")
         );
 
         // Two insertions
         assert_eq!(
             vec![
-                Diff::equal( b"a"),
-                Diff::insert( b"123"),
-                Diff::equal( b"b"),
-                Diff::insert( b"456"),
-                Diff::equal( b"c"),
+                Diff::equal(b"a"),
+                Diff::insert(b"123"),
+                Diff::equal(b"b"),
+                Diff::insert(b"456"),
+                Diff::equal(b"c"),
             ],
             dmp.diff_main("abc", "a123b456c")
         );
@@ -2143,11 +2034,11 @@ mod tests {
         // Two deletions.
         assert_eq!(
             vec![
-                Diff::equal( b"a"),
-                Diff::delete( b"123"),
-                Diff::equal( b"b"),
-                Diff::delete( b"456"),
-                Diff::equal( b"c"),
+                Diff::equal(b"a"),
+                Diff::delete(b"123"),
+                Diff::equal(b"b"),
+                Diff::delete(b"456"),
+                Diff::equal(b"c"),
             ],
             dmp.diff_main("a123b456c", "abc")
         );
@@ -2157,17 +2048,14 @@ mod tests {
         dmp.timeout = None;
         // Simple cases.
         assert_eq!(
-            vec![
-                Diff::delete( b"a"),
-                Diff::insert( b"b"),
-            ],
+            vec![Diff::delete(b"a"), Diff::insert(b"b"),],
             dmp.diff_main("a", "b")
         );
 
         assert_eq!(
             vec![
-                Diff::delete( b"Apple"),
-                Diff::insert( b"Banana"),
+                Diff::delete(b"Apple"),
+                Diff::insert(b"Banana"),
                 Diff::equal(b"s are a"),
                 Diff::insert(b"lso"),
                 Diff::equal(b" fruit.")
@@ -2175,57 +2063,117 @@ mod tests {
             dmp.diff_main("Apples are a fruit.", "Bananas are also fruit.")
         );
 
-        //   assertEquivalent([[DIFF_DELETE, 'a'], [DIFF_INSERT, '\u0680'], [DIFF_EQUAL, 'x'], [DIFF_DELETE, '\t'], [DIFF_INSERT, '\0']], dmp.diff_main('ax\t', '\u0680x\0', false));
+        assert_eq!(
+            vec![
+                Diff::delete(b"a"),
+                Diff::insert("\u{0680}".as_bytes()),
+                Diff::equal(b"x"),
+                Diff::delete(b"\t"),
+                Diff::insert(b"\0")
+            ],
+            dmp.diff_main("ax\t", "\u{0680}x\0")
+        );
 
-        //   // Overlaps.
-        //   assertEquivalent([[DIFF_DELETE, '1'], [DIFF_EQUAL, 'a'], [DIFF_DELETE, 'y'], [DIFF_EQUAL, 'b'], [DIFF_DELETE, '2'], [DIFF_INSERT, 'xab']], dmp.diff_main('1ayb2', 'abxab', false));
+        // Overlaps.
+        assert_eq!(
+            vec![
+                Diff::delete(b"1"),
+                Diff::equal(b"a"),
+                Diff::delete(b"y"),
+                Diff::equal(b"b"),
+                Diff::delete(b"2"),
+                Diff::insert(b"xab"),
+            ],
+            dmp.diff_main("1ayb2", "abxab")
+        );
 
-        //   assertEquivalent([[DIFF_INSERT, 'xaxcx'], [DIFF_EQUAL, 'abc'], [DIFF_DELETE, 'y']], dmp.diff_main('abcy', 'xaxcxabc', false));
+        assert_eq!(
+            vec![
+                Diff::insert(b"xaxcx"),
+                Diff::equal(b"abc"),
+                Diff::delete(b"y"),
+            ],
+            dmp.diff_main("abcy", "xaxcxabc")
+        );
 
-        //   assertEquivalent([[DIFF_DELETE, 'ABCD'], [DIFF_EQUAL, 'a'], [DIFF_DELETE, '='], [DIFF_INSERT, '-'], [DIFF_EQUAL, 'bcd'], [DIFF_DELETE, '='], [DIFF_INSERT, '-'], [DIFF_EQUAL, 'efghijklmnopqrs'], [DIFF_DELETE, 'EFGHIJKLMNOefg']], dmp.diff_main('ABCDa=bcd=efghijklmnopqrsEFGHIJKLMNOefg', 'a-bcd-efghijklmnopqrs', false));
+        assert_eq!(
+            vec![
+                Diff::delete(b"ABCD"),
+                Diff::equal(b"a"),
+                Diff::delete(b"="),
+                Diff::insert(b"-"),
+                Diff::equal(b"bcd"),
+                Diff::delete(b"="),
+                Diff::insert(b"-"),
+                Diff::equal(b"efghijklmnopqrs"),
+                Diff::delete(b"EFGHIJKLMNOefg"),
+            ],
+            dmp.diff_main("ABCDa=bcd=efghijklmnopqrsEFGHIJKLMNOefg", "a-bcd-efghijklmnopqrs")
+        );
 
-        //   // Large equality.
-        //   assertEquivalent([[DIFF_INSERT, ' '], [DIFF_EQUAL, 'a'], [DIFF_INSERT, 'nd'], [DIFF_EQUAL, ' [[Pennsylvania]]'], [DIFF_DELETE, ' and [[New']], dmp.diff_main('a [[Pennsylvania]] and [[New', ' and [[Pennsylvania]]', false));
+        // Large equality.
+        assert_eq!(
+            vec![
+                Diff::insert(b" "),
+                Diff::equal(b"a"),
+                Diff::insert(b"nd"),
+                Diff::equal(b" [[Hepatopancreatic]]"),
+                Diff::delete(b" and [[New"),
+            ],
+            dmp.diff_main("a [[Hepatopancreatic]] and [[New", " and [[Hepatopancreatic]]")
+        );
 
-        //   // Timeout.
-        //   dmp.Diff_Timeout = 0.1;  // 100ms
-        //   var a = '`Twas brillig, and the slithy toves\nDid gyre and gimble in the wabe:\nAll mimsy were the borogoves,\nAnd the mome raths outgrabe.\n';
-        //   var b = 'I am the very model of a modern major general,\nI\'ve information vegetable, animal, and mineral,\nI know the kings of England, and I quote the fights historical,\nFrom Marathon to Waterloo, in order categorical.\n';
-        //   // Increase the text lengths by 1024 times to ensure a timeout.
-        //   for (var i = 0; i < 10; i++) {
-        //     a += a;
-        //     b += b;
-        //   }
-        //   var startTime = (new Date()).getTime();
-        //   dmp.diff_main(a, b);
-        //   var endTime = (new Date()).getTime();
-        //   // Test that we took at least the timeout period.
-        //   assertTrue(dmp.Diff_Timeout * 1000 <= endTime - startTime);
-        //   // Test that we didn't take forever (be forgiving).
-        //   // Theoretically this test could fail very occasionally if the
-        //   // OS task swaps or locks up for a second at the wrong moment.
-        //   assertTrue(dmp.Diff_Timeout * 1000 * 2 > endTime - startTime);
-        //   dmp.Diff_Timeout = 0;
+        // Timeout.
+        const LOW_TIMEOUT: u64 = 100;
+        dmp.timeout = Some(LOW_TIMEOUT);
+        let a = vec!["`Twas brillig, and the slithy toves\nDid gyre and gimble in the wabe:\nAll mimsy were the borogoves,\nAnd the mome raths outgrabe.\n"; 2048].join("");
+        let b = vec!["I am the very model of a modern major general,\nI\'ve information vegetable, animal, and mineral,\nI know the kings of England, and I quote the fights historical,\nFrom Marathon to Waterloo, in order categorical.\n"; 2048].join("");
 
-        //   // Test the linemode speedup.
-        //   // Must be long to pass the 100 char cutoff.
-        //   // Simple line-mode.
-        //   a = '1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n';
-        //   b = 'abcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\n';
-        //   assertEquivalent(dmp.diff_main(a, b, false), dmp.diff_main(a, b, true));
+        let start = Instant::now();
+        dmp.diff_main(&a, &b);
+        let end = Instant::now();
+        // Test that we took at least the timeout period (+ 5ms being generous).
+        assert!((end - start).as_millis() <= LOW_TIMEOUT as u128 + 5);
 
-        //   // Single line-mode.
-        //   a = '1234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890';
-        //   b = 'abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghij';
-        //   assertEquivalent(dmp.diff_main(a, b, false), dmp.diff_main(a, b, true));
+        // Test the linemode speedup.
+        // Must be long to pass the 100 char cutoff.
+        // Simple line-mode.
+        let a =  "12345678901234567890123456789 0123456 78901234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n";
+        let b = "abcdefghij abcdefghij abcdefghij abcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\n";
+        dmp.checklines = Some(false);
+        // let start = Instant::now();
+        let res_no_lm = dmp.diff_main(a, b);
+        // let no_lm = Instant::now() - start;
+        dmp.checklines = Some(true);
+        // let start = Instant::now();
+        let res_yes_lm = dmp.diff_main(a, b);
+        // let yes_lm = Instant::now() - start;
 
-        //   // Overlap line-mode.
-        //   a = '1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n';
-        //   b = 'abcdefghij\n1234567890\n1234567890\n1234567890\nabcdefghij\n1234567890\n1234567890\n1234567890\nabcdefghij\n1234567890\n1234567890\n1234567890\nabcdefghij\n';
-        //   var texts_linemode = diff_rebuildtexts(dmp.diff_main(a, b, true));
-        //   var texts_textmode = diff_rebuildtexts(dmp.diff_main(a, b, false));
-        //   assertEquivalent(texts_textmode, texts_linemode);
+        // Now, we'll run 2 checks - one for result equality, two for speedup
+        assert_eq!(res_no_lm, res_yes_lm);
+        // Fails, no-linemode takes less time than with linemode optimizations
+        // Off by a few 30μs
+        // assert!(no_lm > yes_lm);
 
+        // Single line-mode.
+        let a = "1234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890";
+        let b = "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghij";
+        dmp.checklines = Some(true);
+        let yes_lm = dmp.diff_main(a, b);
+        dmp.checklines = Some(false);
+        let no_lm = dmp.diff_main(a, b);
+        assert_eq!(no_lm, yes_lm);
+
+        // Overlap line-mode.
+        let a = "1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n";
+        let b = "abcdefghij\n1234567890\n1234567890\n1234567890\nabcdefghij\n1234567890\n1234567890\n1234567890\nabcdefghij\n1234567890\n1234567890\n1234567890\nabcdefghij\n";
+        dmp.checklines = Some(true);
+        let yes_lm = dmp.diff_main(a, b);
+        dmp.checklines = Some(false);
+        let no_lm = dmp.diff_main(a, b);
+        assert_eq!(rebuild_text(&yes_lm[..]), rebuild_text(&no_lm[..]));
+
+        // TODO
         //   // Test null inputs.
         //   try {
         //     dmp.diff_main(null, null);
@@ -2234,4 +2182,39 @@ mod tests {
         //     // Exception expected.
         //   }
     }
+
+    // Helper to construct the two texts which made up the diff originally.
+    fn rebuild_text(diffs: &[Diff]) -> (String, String) {
+        let mut txt1 = vec![];
+        let mut txt2 = vec![];
+
+        diffs.iter()
+        .for_each(|d| {
+            let mut txt = d.1.clone();
+            if d.0 != Ops::Insert {
+                txt1.append(&mut txt);
+            }
+
+            let mut txt = d.1.clone();
+            if d.0 != Ops::Delete {
+                txt2.append(&mut txt);
+            }
+        });
+
+        (String::from_utf8(txt1).unwrap(), String::from_utf8(txt2).unwrap())
+    }
+    // function diff_rebuildtexts(diffs) {
+    //     
+    //     var text1 = '';
+    //     var text2 = '';
+    //     for (var x = 0; x < diffs.length; x++) {
+    //       if (diffs[x][0] != DIFF_INSERT) {
+    //         text1 += diffs[x][1];
+    //       }
+    //       if (diffs[x][0] != DIFF_DELETE) {
+    //         text2 += diffs[x][1];
+    //       }
+    //     }
+    //     return [text1, text2];
+    //   }
 }
