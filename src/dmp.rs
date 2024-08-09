@@ -1488,30 +1488,31 @@ impl DiffMatchPatch {
         // Look for the first and last matches of pattern in text.  If two different
         // matches are found, increase the pattern length.
         while text.windows(pattern.len()).position(|p| p == pattern) != 
-            text.windows(pattern.len()).rev().position(|p| p == pattern) &&
+            text.windows(pattern.len()).rev().position(|p| p == pattern).map(|p| text.len() - p - pattern.len()) &&
             pattern.len() < self.match_max_bits() - self.patch_margin() * 2 {
             
             padding += self.patch_margin();
-            pattern = &text[patch.start2 - padding .. patch.start2 + patch.length1 + padding];
+
+            let begin = if patch.start2 > padding { patch.start2 - padding } else { 0 };
+            let end = patch.start2 + patch.length1 + padding;
+
+            pattern = &text[begin .. if end > text.len() { text.len() } else { end }];
         }
-        //   while (text.indexOf(pattern) != text.lastIndexOf(pattern) &&
-        //          pattern.length < this.Match_MaxBits - this.Patch_Margin -
-        //          this.Patch_Margin) {
-        //     padding += this.Patch_Margin;
-        //     pattern = text.substring(patch.start2 - padding,
-        //                              patch.start2 + patch.length1 + padding);
-        //   }
+        
         // Add one chunk for good luck.
         padding += self.patch_margin();
         
         // Add prefix
-        let prefix = &text[patch.start2 - padding .. patch.start2];
+        let begin = if patch.start2 > padding { patch.start2 - padding } else { 0 };
+        let prefix = &text[begin .. patch.start2];
         if !prefix.is_empty() {
             patch.diffs.insert(0, Diff::equal(prefix));
         }
         
         // Add the suffix
-        let suffix = &text[patch.start2 + patch.length1 .. patch.start2 + patch.length1 + padding];
+        let begin = patch.start2 + patch.length1;
+        let end = patch.start2 + patch.length1 + padding;
+        let suffix = &text[if begin < text.len() { begin } else { text.len() } .. if end < text.len() { end } else { text.len() }];
         if !suffix.is_empty() {
             patch.diffs.push(Diff::equal(suffix));
         }
@@ -1711,7 +1712,6 @@ mod tests {
     //     'testMatchBitap',
     //     'testMatchMain',
     //     'testPatchObj',
-    //     'testPatchFromText',
     //     'testPatchToText',
     //     'testPatchMake',
     //     'testPatchSplitMax',
@@ -2657,27 +2657,51 @@ mod tests {
     #[test]
     fn test_patch_add_context() {
         let dmp = DiffMatchPatch::default();
+
         let mut ps = DiffMatchPatch::patch_from_text("@@ -21,4 +21,10 @@\n-jump\n+somersault\n");
         let p = ps.first_mut().unwrap();
         dmp.patch_add_context(p, b"The quick brown fox jumps over the lazy dog.");
         assert_eq!("@@ -17,12 +17,18 @@\n fox \n-jump\n+somersault\n s ov\n", p.to_string());
 
         // Same, but not enough trailing context.
-        // Fails
         let mut ps = DiffMatchPatch::patch_from_text("@@ -21,4 +21,10 @@\n-jump\n+somersault\n");
         let p = ps.first_mut().unwrap();
         dmp.patch_add_context(p, b"The quick brown fox jumps.");
         assert_eq!("@@ -17,10 +17,16 @@\n fox \n-jump\n+somersault\n s.\n", p.to_string());
-        
-        // // Same, but not enough leading context.
-        // p = dmp.patch_fromText('@@ -3 +3,2 @@\n-e\n+at\n')[0];
-        // dmp.patch_addContext_(p, 'The quick brown fox jumps.');
-        // assertEquals('@@ -1,7 +1,8 @@\n Th\n-e\n+at\n  qui\n', p.toString());
 
-        // // Same, but with ambiguity.
-        // p = dmp.patch_fromText('@@ -3 +3,2 @@\n-e\n+at\n')[0];
-        // dmp.patch_addContext_(p, 'The quick brown fox jumps.  The quick brown fox crashes.');
-        // assertEquals('@@ -1,27 +1,28 @@\n Th\n-e\n+at\n  quick brown fox jumps. \n', p.toString());
+        // Same, but not enough leading context.
+        let mut ps = DiffMatchPatch::patch_from_text("@@ -3 +3,2 @@\n-e\n+at\n");
+        let p = ps.first_mut().unwrap();
+        dmp.patch_add_context(p, b"The quick brown fox jumps.");
+        assert_eq!("@@ -1,7 +1,8 @@\n Th\n-e\n+at\n  qui\n", p.to_string());
+
+        // Same, but with ambiguity.
+        let mut ps = DiffMatchPatch::patch_from_text("@@ -3 +3,2 @@\n-e\n+at\n");
+        let p = ps.first_mut().unwrap();
+        dmp.patch_add_context(p, b"The quick brown fox jumps.  The quick brown fox crashes.");
+        assert_eq!("@@ -1,27 +1,28 @@\n Th\n-e\n+at\n  quick brown fox jumps. \n", p.to_string());
+    }
+
+    #[test]
+    fn test_patch_from_text() {
+        assert!(DiffMatchPatch::patch_from_text("").is_empty());
+
+        assert_eq!("@@ -21,18 +22,17 @@\n jump\n-s\n+ed\n  over \n-the\n+a\n \nlaz\n", DiffMatchPatch::patch_from_text("@@ -21,18 +22,17 @@\n jump\n-s\n+ed\n  over \n-the\n+a\n %0Alaz\n")[0].to_string());
+
+        assert_eq!("@@ -1 +1 @@\n-a\n+b\n", DiffMatchPatch::patch_from_text("@@ -1 +1 @@\n-a\n+b\n")[0].to_string());
+
+        assert_eq!("@@ -1,3 +0,0 @@\n-abc\n", DiffMatchPatch::patch_from_text("@@ -1,3 +0,0 @@\n-abc\n")[0].to_string());
+
+        assert_eq!("@@ -0,0 +1,3 @@\n+abc\n", DiffMatchPatch::patch_from_text("@@ -0,0 +1,3 @@\n+abc\n")[0].to_string());
+
+        // TODO
+        // // Generates error.
+        // try {
+        //     dmp.patch_fromText('Bad\nPatch\n');
+        //     assertEquals(Error, null);
+        // } catch (e) {
+        //     // Exception expected.
+        // }
     }
 
     #[test]
