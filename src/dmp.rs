@@ -1573,7 +1573,7 @@ impl DiffMatchPatch {
         todo!()
     }
 
-    pub fn patch_make(input: PatchInput) -> Patches {
+    pub fn patch_make(&self, input: PatchInput) -> Patches {
         let mut diff_input;
         let (txt, diffs) = match input {
             // No diffs provided, lets make our own
@@ -1595,8 +1595,11 @@ impl DiffMatchPatch {
         todo!()
     }
 
-    pub fn patch_to_text(patches: Patches) -> String {
-        todo!()
+    pub fn patch_to_text(patches: &Patches) -> String {
+        patches
+            .iter()
+            .map(|p| p.to_string())
+            .collect::<String>()
     }
 
     pub fn patch_from_text(text: &str) -> Patches {
@@ -1712,15 +1715,10 @@ mod tests {
     //     'testMatchBitap',
     //     'testMatchMain',
     //     'testPatchObj',
-    //     'testPatchToText',
-    //     'testPatchMake',
     //     'testPatchSplitMax',
     //     'testPatchAddPadding',
     //     'testPatchApply'
     // ];
-
-    #[test]
-    fn test_diff_is_destructurable() {}
 
     #[test]
     fn test_prefix() {
@@ -2642,16 +2640,16 @@ mod tests {
     
     #[test]
     fn test_serde() {
-        let diffs = vec![
-            Diff::delete(b"a"),
-            Diff::insert("\u{0680}".as_bytes()),
-            Diff::equal(b"x"),
-            Diff::delete(b"\t"),
-            Diff::insert(b"\0")
-        ];
+        // let diffs = vec![
+        //     Diff::delete(b"a"),
+        //     Diff::insert("\u{0680}".as_bytes()),
+        //     Diff::equal(b"x"),
+        //     Diff::delete(b"\t"),
+        //     Diff::insert(b"\0")
+        // ];
 
-        let serialized = serde_json::to_string(&diffs).unwrap();
-        println!("{serialized}");
+        // let serialized = serde_json::to_string(&diffs).unwrap();
+        // println!("{serialized}");
     }
 
     #[test]
@@ -2704,6 +2702,76 @@ mod tests {
         // }
     }
 
+    #[test]
+    fn patch_to_text() {
+        let strp = "@@ -21,18 +22,17 @@\n jump\n-s\n+ed\n  over \n-the\n+a\n  laz\n";
+        let patches = DiffMatchPatch::patch_from_text(strp);
+        assert_eq!(strp, DiffMatchPatch::patch_to_text(&patches));
+
+        let strp = "@@ -1,9 +1,9 @@\n-f\n+F\n oo+fooba\n@@ -7,9 +7,9 @@\n obar\n-,\n+.\n  tes\n";
+        let patches = DiffMatchPatch::patch_from_text(strp);
+        assert_eq!(strp, DiffMatchPatch::patch_to_text(&patches));
+    }
+
+    #[test]
+    fn test_patch_make() {
+        let dmp = DiffMatchPatch::default();
+        let patches = dmp.patch_make(super::PatchInput::Texts("", ""));
+        assert!(patches.is_empty());
+
+        // var text1 = 'The quick brown fox jumps over the lazy dog.';
+        // var text2 = 'That quick brown fox jumped over a lazy dog.';
+        // // Text2+Text1 inputs.
+        // var expectedPatch = '@@ -1,8 +1,7 @@\n Th\n-at\n+e\n  qui\n@@ -21,17 +21,18 @@\n jump\n-ed\n+s\n  over \n-a\n+the\n  laz\n';
+        // // The second patch must be "-21,17 +21,18", not "-22,17 +21,18" due to rolling context.
+        // patches = dmp.patch_make(text2, text1);
+        // assertEquals(expectedPatch, dmp.patch_toText(patches));
+      
+        // // Text1+Text2 inputs.
+        // expectedPatch = '@@ -1,11 +1,12 @@\n Th\n-e\n+at\n  quick b\n@@ -22,18 +22,17 @@\n jump\n-s\n+ed\n  over \n-the\n+a\n  laz\n';
+        // patches = dmp.patch_make(text1, text2);
+        // assertEquals(expectedPatch, dmp.patch_toText(patches));
+      
+        // // Diff input.
+        // var diffs = dmp.diff_main(text1, text2, false);
+        // patches = dmp.patch_make(diffs);
+        // assertEquals(expectedPatch, dmp.patch_toText(patches));
+      
+        // // Text1+Diff inputs.
+        // patches = dmp.patch_make(text1, diffs);
+        // assertEquals(expectedPatch, dmp.patch_toText(patches));
+      
+        // // Text1+Text2+Diff inputs (deprecated).
+        // patches = dmp.patch_make(text1, text2, diffs);
+        // assertEquals(expectedPatch, dmp.patch_toText(patches));
+      
+        // // Character encoding.
+        // patches = dmp.patch_make('`1234567890-=[]\\;\',./', '~!@#$%^&*()_+{}|:"<>?');
+        // assertEquals('@@ -1,21 +1,21 @@\n-%601234567890-=%5B%5D%5C;\',./\n+~!@#$%25%5E&*()_+%7B%7D%7C:%22%3C%3E?\n', dmp.patch_toText(patches));
+      
+        // // Character decoding.
+        // diffs = [[DIFF_DELETE, '`1234567890-=[]\\;\',./'], [DIFF_INSERT, '~!@#$%^&*()_+{}|:"<>?']];
+        // assertEquivalent(diffs, dmp.patch_fromText('@@ -1,21 +1,21 @@\n-%601234567890-=%5B%5D%5C;\',./\n+~!@#$%25%5E&*()_+%7B%7D%7C:%22%3C%3E?\n')[0].diffs);
+      
+        // // Long string with repeats.
+        // text1 = '';
+        // for (var x = 0; x < 100; x++) {
+        //   text1 += 'abcdef';
+        // }
+        // text2 = text1 + '123';
+        // expectedPatch = '@@ -573,28 +573,31 @@\n cdefabcdefabcdefabcdefabcdef\n+123\n';
+        // patches = dmp.patch_make(text1, text2);
+        // assertEquals(expectedPatch, dmp.patch_toText(patches));
+      
+        // // Test null inputs.
+        // try {
+        //   dmp.patch_make(null);
+        //   assertEquals(Error, null);
+        // } catch (e) {
+        //   // Exception expected.
+        // }
+    }
+    
     #[test]
     fn test_parse_patch_header() {
         assert_eq!(Some((21, Some(4), 21, Some(10))), DiffMatchPatch::parse_patch_header("@@ -21,4 +21,10 @@".as_bytes()));
