@@ -1,7 +1,8 @@
 use std::{
-    collections::HashMap, time::{Duration, Instant}
+    collections::HashMap, fmt::Display, time::{Duration, Instant}
 };
 
+use percent_encoding::{percent_decode, percent_encode, NON_ALPHANUMERIC};
 use serde::{Deserialize, Serialize};
 use serde_repr::{Deserialize_repr, Serialize_repr};
 
@@ -18,7 +19,7 @@ pub enum Ops {
 /// (Ops::Delete, String::new("Hello")) means delete `Hello`
 /// (Ops::Insert, String::new("Goodbye")) means add `Goodbye`
 /// (Ops::Equal, String::new("World")) means keep world
-#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Diff(
     Ops,
     Vec<u8>
@@ -45,17 +46,6 @@ impl Diff {
 }
 
 
-
-pub struct Patch {}
-
-pub enum PatchInput<'a> {
-    Texts(&'a [u8], &'a [u8]),
-    Diffs(&'a [Diff]),
-    TextDiffs(&'a [u8], &'a [Diff])
-}
-
-pub type Patches = Vec<Patch>;
-
 pub struct DiffMatchPatch {
     /// a speedup flag, If present and false, then don't run
     /// a line-level diff first to identify the changed areas.
@@ -63,6 +53,20 @@ pub struct DiffMatchPatch {
     checklines: Option<bool>,
     /// A default timeout in num milliseconda, defaults to 1000 (1 second)
     timeout: Option<u64>,
+    // How far to search for a match (0 = exact location, 1000+ = broad match).
+    // A match this many characters away from the expected location will add
+    // 1.0 to the score (0.0 is a perfect match).
+    // int Match_Distance;
+    // When deleting a large block of text (over ~64 characters), how close does
+    // the contents have to match the expected contents. (0.0 = perfection,
+    // 1.0 = very loose).  Note that Match_Threshold controls how closely the
+    // end points of a delete need to match.
+    // float Patch_DeleteThreshold;
+    // Chunk size for context length.
+    patch_margin: usize,
+
+    // The number of bits in an int.
+    match_max_bits: usize,
 }
 
 impl Default for DiffMatchPatch {
@@ -70,6 +74,8 @@ impl Default for DiffMatchPatch {
         Self {
             checklines: Some(true),
             timeout: Some(1000),
+            patch_margin: 4,
+            match_max_bits: 32
         }
     }
 }
@@ -92,6 +98,16 @@ impl DiffMatchPatch {
     fn timeout(&self) -> u64 {
         self.timeout
             .map_or(31536000_u64, |tout| if tout > 0 { tout } else { u64::MAX })
+    }
+
+    // returns the current patch margin
+    fn patch_margin(&self) -> usize {
+        self.patch_margin
+    }
+
+    // returns the configured max_bits
+    fn match_max_bits(&self) -> usize {
+        self.match_max_bits
     }
 
     fn diff_internal<'a>(
@@ -1107,6 +1123,10 @@ impl DiffMatchPatch {
             Self::cleanup_merge(diffs);
         }
     }
+
+    fn cleanup_efficiency(diffs: &mut Vec<Diff>) {
+        todo!()
+    }
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -1170,7 +1190,6 @@ impl DiffMatchPatch {
             }
         }
 
-        //
         if broke.is_some() {
             let line = &text[cursor..];
             let e = hash.entry(line).or_insert(array.len());
@@ -1202,6 +1221,311 @@ impl DiffMatchPatch {
     }
 }
 
+// Patch Methods
+#[derive(Debug, Default)]
+pub struct Patch {
+    diffs: Vec<Diff>,
+    start1: usize,
+    start2: usize,
+    length1: usize,
+    length2: usize
+}
+
+impl Display for Patch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let coord1 = if self.length1 == 0 {
+            format!("{},0", self.start1)
+        } else {
+            format!(
+                "{}{}",
+                self.start1 + 1,
+                if self.length1 != 1 {
+                    format!(",{}", self.length1)
+                } else {
+                    String::new()
+                }
+            )
+        };
+
+        let coord2 = if self.length2 == 0 {
+            format!("{},0", self.start2)
+        } else {
+            format!(
+                "{}{}",
+                self.start2 + 1,
+                if self.length2 != 1 {
+                    format!(",{}", self.length2)
+                } else {
+                    String::new()
+                }
+            )
+        };
+
+        let mut segments = vec!["@@ -".to_string(), coord1, " +".to_string(), coord2 , " @@\n".to_string()];
+        self.diffs.iter()
+        .for_each(|diff| {
+            let sign = match diff.0 {
+                Ops::Insert => '+',
+                Ops::Delete => '-',
+                Ops::Equal => ' '
+            };
+
+            segments.push(
+                String::from_utf8([&[sign as u8], &diff.1[..], &[b'\n']].concat()).unwrap()
+            )
+        });
+
+        write!(f, "{}", segments.join(""))
+    }
+}
+
+pub enum PatchInput<'a> {
+    Texts(&'a str, &'a str),
+    Diffs(&'a [Diff]),
+    TextDiffs(&'a str, &'a [Diff])
+}
+
+pub type Patches = Vec<Patch>;
+
+impl DiffMatchPatch {
+    fn parse_patch_header(s: &[u8]) -> Option<(usize, Option<usize>, usize, Option<usize>)> {
+        let mut section = Vec::with_capacity(64);
+        let mut current_sect = 0;
+
+        let mut old_line = 0;
+        let mut old_cols = None;
+        let mut new_line = 0;
+        let mut new_cols = None;
+
+        for &c in s.iter() {
+            if c == b' ' {
+                match current_sect {
+                    0 => {
+                        if &section != b"@@" {
+                            return None;
+                        }
+                    }
+                    1 => {
+                        if section.is_empty() {
+                            return None;
+                        }
+
+                        let splits = section[1..].split(|&p| p == b',').collect::<Vec<_>>();
+                        
+                        let ol = splits.first()?;
+                        old_line = std::str::from_utf8(ol).ok()?.parse::<usize>().ok()?;
+                        if let Some(&oc) = splits.get(1) {
+                            old_cols = Some(std::str::from_utf8(oc).ok()?.parse::<usize>().ok()?);
+                        }
+                    }
+                    2 => {
+                        let splits = section[
+                            if *section.first()? == b'+' { 1 } else { 0 }
+                            ..
+                        ].split(|&p| p == b',').collect::<Vec<_>>();
+                        
+                        let nl = splits.first()?;
+                        new_line = std::str::from_utf8(nl).ok()?.parse::<usize>().ok()?;
+                        if let Some(&nc) = splits.get(1) {
+                            new_cols = Some(std::str::from_utf8(nc).ok()?.parse::<usize>().ok()?);
+                        }
+                    }
+                    _ => {
+                        // invalid pattern
+                        return None;
+                    }
+                }
+
+                section = Vec::with_capacity(64);
+                current_sect += 1;
+                continue;
+            }
+
+            if current_sect == 1 && section.is_empty() && c != b'-' {
+                return None;
+            }
+
+            section.push(c);
+        }
+
+        if &section != b"@@" {
+            return None;
+        }
+
+
+        Some(( old_line, old_cols, new_line, new_cols ))
+        
+        // let old_line_col = parts.next()?;
+        // // let old_line_col_parts = old_line_col.splitn(2, |&b| b == b',');
+        // let old_line = old_line_col.iter()
+        //     .skip_while(|&&b| b == b'-')
+        //     .copied()
+        //     .collect::<Vec<u8>>()
+        //     .parse::<usize>().ok()?;
+        // // let old_line = old_line_col.next()?.trim_start_matches(b"-").parse::<usize>().ok()?;
+        // let old_col = if let Some(old_col) = old_line_col_parts.next() {
+        //     Some(old_col.parse::<usize>().ok()?)
+        // } else {
+        //     None
+        // };
+        // let infix = parts.next()?;
+        // if infix != b" +@" {
+        //     return None;
+        // }
+        // let new_line_col = parts.next()?;
+        // let new_line_col_parts = new_line_col.splitn(2, |&b| b == b',');
+        // let new_line = new_line_col_parts.next()?.trim_start_matches(b"+").parse::<usize>().ok()?;
+        // let new_col = if let Some(new_col) = new_line_col_parts.next() {
+        //     Some(new_col.parse::<usize>().ok()?)
+        // } else {
+        //     None
+        // };
+        // let suffix = parts.next()?;
+        // if suffix != b" @@\n" {
+        //     return None;
+        // }
+        // Some((old_line, old_col, new_line, new_col))
+    }
+
+
+    fn patch_make_internal(&self, txt: &[u8], diffs: &[Diff]) -> Result<Patches, ()> {
+        // The null cases
+        if txt.is_empty() {
+            todo!();
+            // return Err(())
+        }
+
+        // No diffs -> no patches
+        if diffs.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut patch = Patch::default();
+        let mut char_n1 = 0;
+        let mut char_n2  = 0;
+
+        let mut prepatch: Vec<u8> = vec![];
+        let mut postpatch: Vec<u8> = vec![];
+
+        diffs.iter().enumerate().for_each(|(idx, diff)| {
+            // a new patch starts here
+            if patch.diffs.is_empty() && diff.0 != Ops::Equal {
+                patch.start1 = char_n1;
+                patch.start2 = char_n2;
+            }
+
+            match diff.0 {
+                Ops::Insert => {
+                    patch.length2 += diff.1.len();
+                    postpatch = [&postpatch[..char_n2], &diff.1, &postpatch[char_n2..]].concat();
+                    patch.diffs.push(diff.clone());
+                }
+                Ops::Delete => {
+                    patch.length2 += diff.1.len();
+                    postpatch = [&postpatch[..char_n2], &postpatch[char_n2 + diff.1.len()..]].concat(); 
+                    patch.diffs.push(diff.clone());
+                }
+                Ops::Equal => {
+                    if diff.1.len() <= 2 * self.patch_margin() && !patch.diffs.is_empty() && diffs.len() != idx + 1 {
+                        // Small equality inside a patch.
+                        patch.length1 += diff.1.len();
+                        patch.length2 += diff.1.len();
+
+                        patch.diffs.push(diff.clone());
+                    } else if diff.1.len() >= 2 * self.patch_margin() && !patch.diffs.is_empty() {
+                        // Time for a new patch.
+                        self.patch_add_context(&mut patch, &prepatch);
+                        // if (patchDiffLength) {
+                        //     this.patch_addContext_(patch, prepatch_text);
+                        //     patches.push(patch);
+                        //     patch = new diff_match_patch.patch_obj();
+                        //     patchDiffLength = 0;
+                        //     // Unlike Unidiff, our patch lists have a rolling context.
+                        //     // https://github.com/google/diff-match-patch/wiki/Unidiff
+                        //     // Update prepatch text & pos to reflect the application of the
+                        //     // just completed patch.
+                        //     prepatch_text = postpatch_text;
+                        //     char_count1 = char_count2;
+                        //   }
+                    }
+                    // if (aDiff.text.length() <= 2 * Patch_Margin
+                    //     && !patch.diffs.isEmpty() && !(aDiff == diffs.back())) {
+                    // // Small equality inside a patch.
+                    // patch.diffs.append(aDiff);
+                    // patch.length1 += aDiff.text.length();
+                    // patch.length2 += aDiff.text.length();
+                    // }
+
+                    // if (aDiff.text.length() >= 2 * Patch_Margin) {
+                    // // Time for a new patch.
+                    // if (!patch.diffs.isEmpty()) {
+                    //     patch_addContext(patch, prepatch_text);
+                    //     patches.append(patch);
+                    //     patch = Patch();
+                    //     // Unlike Unidiff, our patch lists have a rolling context.
+                    //     // http://code.google.com/p/google-diff-match-patch/wiki/Unidiff
+                    //     // Update prepatch text & pos to reflect the application of the
+                    //     // just completed patch.
+                    //     prepatch_text = postpatch_text;
+                    //     char_count1 = char_count2;
+                    // }
+                    // }
+                }
+            }
+        });
+
+        todo!()
+    }
+
+    fn patch_add_context(&self, patch: &mut Patch, text: &[u8]) {
+        if text.is_empty() {
+            return;
+        }
+
+        let mut pattern = &text[patch.start2 .. patch.start2 + patch.length1];
+        let mut padding = 0;
+        
+        // Look for the first and last matches of pattern in text.  If two different
+        // matches are found, increase the pattern length.
+        while text.windows(pattern.len()).position(|p| p == pattern) != 
+            text.windows(pattern.len()).rev().position(|p| p == pattern) &&
+            pattern.len() < self.match_max_bits() - self.patch_margin() * 2 {
+            
+            padding += self.patch_margin();
+            pattern = &text[patch.start2 - padding .. patch.start2 + patch.length1 + padding];
+        }
+        //   while (text.indexOf(pattern) != text.lastIndexOf(pattern) &&
+        //          pattern.length < this.Match_MaxBits - this.Patch_Margin -
+        //          this.Patch_Margin) {
+        //     padding += this.Patch_Margin;
+        //     pattern = text.substring(patch.start2 - padding,
+        //                              patch.start2 + patch.length1 + padding);
+        //   }
+        // Add one chunk for good luck.
+        padding += self.patch_margin();
+        
+        // Add prefix
+        let prefix = &text[patch.start2 - padding .. patch.start2];
+        if !prefix.is_empty() {
+            patch.diffs.insert(0, Diff::equal(prefix));
+        }
+        
+        // Add the suffix
+        let suffix = &text[patch.start2 + patch.length1 .. patch.start2 + patch.length1 + padding];
+        if !suffix.is_empty() {
+            patch.diffs.push(Diff::equal(suffix));
+        }
+        // Roll back the start points.
+        patch.start1 -= prefix.len();
+        patch.start2 -= prefix.len();
+
+        // extend the lengths
+        patch.length1 += prefix.len() + suffix.len();
+        patch.length2 += prefix.len() + suffix.len();
+    }
+}
+
+// Exposed APIs
 impl DiffMatchPatch {
     /// Find the differences between two texts.  Simplifies the problem by stripping any common prefix or suffix off the texts before diffing.
     /// Args:
@@ -1212,7 +1536,7 @@ impl DiffMatchPatch {
     ///
     /// Returns:
     /// Vec of changes (Diff).
-    pub fn diff_main<'a>(&self, old: &'a str, new: &'a str) -> Vec<Diff> {
+    pub fn diff_main(&self, old: &str, new: &str) -> Vec<Diff> {
         let deadline = if let Some(i) = Instant::now()
             .checked_add(Duration::from_millis(self.timeout())) {
                 i
@@ -1249,10 +1573,24 @@ impl DiffMatchPatch {
     }
 
     pub fn patch_make(input: PatchInput) -> Patches {
-        todo!()
-    }
+        let mut diff_input;
+        let (txt, diffs) = match input {
+            // No diffs provided, lets make our own
+            PatchInput::Texts(txt1, txt2 ) => {
+                let dmp = DiffMatchPatch::default();
+                diff_input = dmp.diff_main(txt1, txt2);
+                Self::cleanup_semantic(&mut diff_input);
 
-    pub fn patch_make_text_diff(text1: &str, diffs: &[Diff]) -> Patches {
+                (txt1.as_bytes(), &diff_input[..])
+            }
+            PatchInput::Diffs(diffs) => {
+                // No origin string provided, compute our own.
+                todo!()
+            }
+            PatchInput::TextDiffs(txt, diffs) => (txt.as_bytes(), diffs)
+
+        };
+        
         todo!()
     }
 
@@ -1261,7 +1599,91 @@ impl DiffMatchPatch {
     }
 
     pub fn patch_from_text(text: &str) -> Patches {
-        todo!()
+        if text.is_empty() {
+            return vec![];
+        }
+        let mut text = text.as_bytes().split(|&p| p == b'\n').collect::<Vec<_>>();
+
+        let mut patches = vec![];
+
+        while !text.is_empty() {
+            let (old_line, old_cols, new_line, new_cols) = if let Some(p) = Self::parse_patch_header(text.first().unwrap()) {
+                p
+            } else {
+                todo!("return error")
+            };
+
+            let mut patch = Patch { start1: old_line, start2: new_line, ..Default::default() };
+
+            if let Some(old_cols) = old_cols {
+                if old_cols != 0 {
+                    patch.start1 -= 1;
+                    patch.length1 = old_cols;
+                }
+            } else {
+                patch.start1 -= 1;
+                patch.length1 = 1;
+            }
+
+            if let Some(new_cols) = new_cols {
+                if new_cols != 0 {
+                    patch.start2 -= 1;
+                    patch.length2 = new_cols;
+                }
+            } else {
+                patch.start2 -= 1;
+                patch.length2 = 1;
+            }
+
+            text.remove(0);
+
+            while !text.is_empty() {
+                let txt = if let Some(&s) = text.first() {
+                    if !s.is_empty() {
+                        s
+                    } else {
+                        text.remove(0);
+                        continue;
+                    }
+                } else {
+                    text.remove(0);
+                    continue;
+                };
+
+                let sign = if let Some(&sign) = txt.first() {
+                    sign
+                } else {
+                    unreachable!("Already checked for emptyness!");
+                };
+
+                let line = percent_decode(&txt[1..]).collect::<Vec<_>>();
+                
+                match sign {
+                    b'-' => {
+                        patch.diffs.push(Diff::delete(&line));
+                    }
+                    b'+' => {
+                        patch.diffs.push(Diff::insert(&line));
+                    }
+                    b' ' => {
+                        patch.diffs.push(Diff::equal(&line));
+                    }
+                    b'@' => {
+                        // next patch, break
+                        break;
+                    }
+                    _ => {
+                        todo!("throw error, invalid encoding")
+                    }
+                }
+
+                text.remove(0);
+            }
+
+            patches.push(patch);
+        };
+
+        patches
     }
 
     pub fn patch_apply(patches: &[Patch], text: &str) -> (String, ()) {
@@ -1291,7 +1713,6 @@ mod tests {
     //     'testPatchObj',
     //     'testPatchFromText',
     //     'testPatchToText',
-    //     'testPatchAddContext',
     //     'testPatchMake',
     //     'testPatchSplitMax',
     //     'testPatchAddPadding',
@@ -2231,5 +2652,41 @@ mod tests {
 
         let serialized = serde_json::to_string(&diffs).unwrap();
         println!("{serialized}");
+    }
+
+    #[test]
+    fn test_patch_add_context() {
+        let dmp = DiffMatchPatch::default();
+        let mut ps = DiffMatchPatch::patch_from_text("@@ -21,4 +21,10 @@\n-jump\n+somersault\n");
+        let p = ps.first_mut().unwrap();
+        dmp.patch_add_context(p, b"The quick brown fox jumps over the lazy dog.");
+        assert_eq!("@@ -17,12 +17,18 @@\n fox \n-jump\n+somersault\n s ov\n", p.to_string());
+
+        // Same, but not enough trailing context.
+        // Fails
+        let mut ps = DiffMatchPatch::patch_from_text("@@ -21,4 +21,10 @@\n-jump\n+somersault\n");
+        let p = ps.first_mut().unwrap();
+        dmp.patch_add_context(p, b"The quick brown fox jumps.");
+        assert_eq!("@@ -17,10 +17,16 @@\n fox \n-jump\n+somersault\n s.\n", p.to_string());
+        
+        // // Same, but not enough leading context.
+        // p = dmp.patch_fromText('@@ -3 +3,2 @@\n-e\n+at\n')[0];
+        // dmp.patch_addContext_(p, 'The quick brown fox jumps.');
+        // assertEquals('@@ -1,7 +1,8 @@\n Th\n-e\n+at\n  qui\n', p.toString());
+
+        // // Same, but with ambiguity.
+        // p = dmp.patch_fromText('@@ -3 +3,2 @@\n-e\n+at\n')[0];
+        // dmp.patch_addContext_(p, 'The quick brown fox jumps.  The quick brown fox crashes.');
+        // assertEquals('@@ -1,27 +1,28 @@\n Th\n-e\n+at\n  quick brown fox jumps. \n', p.toString());
+    }
+
+    #[test]
+    fn test_parse_patch_header() {
+        assert_eq!(Some((21, Some(4), 21, Some(10))), DiffMatchPatch::parse_patch_header("@@ -21,4 +21,10 @@".as_bytes()));
+        assert_eq!(Some((3, None, 3, Some(2))), DiffMatchPatch::parse_patch_header("@@ -3 +3,2 @@".as_bytes()));
+
+        // Bad cases
+        assert!(DiffMatchPatch::parse_patch_header("@@  +3,2 @@".as_bytes()).is_none());
+        assert!(DiffMatchPatch::parse_patch_header("@@ 2046 +3,2 @@".as_bytes()).is_none());
     }
 }
