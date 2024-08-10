@@ -1222,7 +1222,7 @@ impl DiffMatchPatch {
 }
 
 // Patch Methods
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct Patch {
     diffs: Vec<Diff>,
     start1: usize,
@@ -1391,8 +1391,7 @@ impl DiffMatchPatch {
     fn patch_make_internal(&self, txt: &[u8], diffs: &[Diff]) -> Result<Patches, ()> {
         // The null cases
         if txt.is_empty() {
-            todo!();
-            // return Err(())
+            return Ok(vec![])
         }
 
         // No diffs -> no patches
@@ -1400,12 +1399,14 @@ impl DiffMatchPatch {
             return Ok(Vec::new());
         }
 
+        let mut patches = vec![];
+
         let mut patch = Patch::default();
         let mut char_n1 = 0;
         let mut char_n2  = 0;
 
-        let mut prepatch: Vec<u8> = vec![];
-        let mut postpatch: Vec<u8> = vec![];
+        let mut prepatch: Vec<u8> = txt.to_vec();
+        let mut postpatch: Vec<u8> = prepatch.clone();
 
         diffs.iter().enumerate().for_each(|(idx, diff)| {
             // a new patch starts here
@@ -1414,15 +1415,21 @@ impl DiffMatchPatch {
                 patch.start2 = char_n2;
             }
 
+            println!("Diff: {:?} {}", diff.0, std::str::from_utf8(&diff.1).unwrap());
+
             match diff.0 {
                 Ops::Insert => {
                     patch.length2 += diff.1.len();
+                    println!("patch make: INSERT char_n2[{char_n2}] textlen[{}]", postpatch.len());
                     postpatch = [&postpatch[..char_n2], &diff.1, &postpatch[char_n2..]].concat();
+                    println!("patch make: INSERT after {} Indexes [0 .. {char_n2}] {} [{char_n2} ..]", postpatch.len(), diff.1.len());
                     patch.diffs.push(diff.clone());
                 }
                 Ops::Delete => {
-                    patch.length2 += diff.1.len();
-                    postpatch = [&postpatch[..char_n2], &postpatch[char_n2 + diff.1.len()..]].concat(); 
+                    patch.length1 += diff.1.len();
+                    println!("patch make: DELETE char_n2[{char_n2}] textlen[{}]", postpatch.len());
+                    postpatch = [&postpatch[..char_n2], &postpatch[char_n2 + diff.1.len()..]].concat();
+                    println!("patch make: DELETE after {} Indexes [0 .. {char_n2}] [{} ..]", postpatch.len(), char_n2 + diff.1.len());
                     patch.diffs.push(diff.clone());
                 }
                 Ops::Equal => {
@@ -1435,52 +1442,43 @@ impl DiffMatchPatch {
                     } else if diff.1.len() >= 2 * self.patch_margin() && !patch.diffs.is_empty() {
                         // Time for a new patch.
                         self.patch_add_context(&mut patch, &prepatch);
-                        // if (patchDiffLength) {
-                        //     this.patch_addContext_(patch, prepatch_text);
-                        //     patches.push(patch);
-                        //     patch = new diff_match_patch.patch_obj();
-                        //     patchDiffLength = 0;
-                        //     // Unlike Unidiff, our patch lists have a rolling context.
-                        //     // https://github.com/google/diff-match-patch/wiki/Unidiff
-                        //     // Update prepatch text & pos to reflect the application of the
-                        //     // just completed patch.
-                        //     prepatch_text = postpatch_text;
-                        //     char_count1 = char_count2;
-                        //   }
-                    }
-                    // if (aDiff.text.length() <= 2 * Patch_Margin
-                    //     && !patch.diffs.isEmpty() && !(aDiff == diffs.back())) {
-                    // // Small equality inside a patch.
-                    // patch.diffs.append(aDiff);
-                    // patch.length1 += aDiff.text.length();
-                    // patch.length2 += aDiff.text.length();
-                    // }
+                        patches.push(patch.clone());
+                        patch = Patch::default();
 
-                    // if (aDiff.text.length() >= 2 * Patch_Margin) {
-                    // // Time for a new patch.
-                    // if (!patch.diffs.isEmpty()) {
-                    //     patch_addContext(patch, prepatch_text);
-                    //     patches.append(patch);
-                    //     patch = Patch();
-                    //     // Unlike Unidiff, our patch lists have a rolling context.
-                    //     // http://code.google.com/p/google-diff-match-patch/wiki/Unidiff
-                    //     // Update prepatch text & pos to reflect the application of the
-                    //     // just completed patch.
-                    //     prepatch_text = postpatch_text;
-                    //     char_count1 = char_count2;
-                    // }
-                    // }
+                        // Unlike Unidiff, our patch lists have a rolling context.
+                        // http://code.google.com/p/google-diff-match-patch/wiki/Unidiff
+                        // Update prepatch text & pos to reflect the application of the
+                        // just completed patch.
+                        prepatch.clone_from(&postpatch);
+                        char_n1 = char_n2;
+                    }
                 }
             }
+
+            if diff.0 != Ops::Insert {
+                char_n1 += diff.1.len();
+            }
+            if diff.0 != Ops::Delete {
+                char_n2 += diff.1.len();
+            }
+
+            println!("{patch} {} {} {} {} {}", patch.diffs.len(), patch.length1, patch.length2, patch.start1, patch.start2);
         });
 
-        todo!()
+        // Pick up the leftover patch if not empty.
+        if !patch.diffs.is_empty() {
+            self.patch_add_context(&mut patch, &prepatch);
+            patches.push(patch);
+        }
+
+        Ok(patches)
     }
 
     fn patch_add_context(&self, patch: &mut Patch, text: &[u8]) {
         if text.is_empty() {
             return;
         }
+        println!("Add context: {} {} {}", patch, patch.start2, patch.length1);
 
         let mut pattern = &text[patch.start2 .. patch.start2 + patch.length1];
         let mut padding = 0;
@@ -1592,7 +1590,7 @@ impl DiffMatchPatch {
 
         };
         
-        todo!()
+        self.patch_make_internal(txt, diffs).unwrap()
     }
 
     pub fn patch_to_text(patches: &Patches) -> String {
@@ -2719,11 +2717,16 @@ mod tests {
         let patches = dmp.patch_make(super::PatchInput::Texts("", ""));
         assert!(patches.is_empty());
 
+        let txt1 = "The quick brown fox jumps over the lazy dog.";
+        let txt2 = "That quick brown fox jumped over a lazy dog.";
+        // The second patch must be "-21,17 +21,18", not "-22,17 +21,18" due to rolling context.
+        let patches = dmp.patch_make(crate::dmp::PatchInput::Texts(txt2, txt1));
+        assert_eq!("@@ -1,8 +1,7 @@\n Th\n-at\n+e\n  qui\n@@ -21,17 +21,18 @@\n jump\n-ed\n+s\n  over \n-a\n+the\n  laz\n", DiffMatchPatch::patch_to_text(&patches));
         // var text1 = 'The quick brown fox jumps over the lazy dog.';
-        // var text2 = 'That quick brown fox jumped over a lazy dog.';
+        // var text2 = '';
         // // Text2+Text1 inputs.
-        // var expectedPatch = '@@ -1,8 +1,7 @@\n Th\n-at\n+e\n  qui\n@@ -21,17 +21,18 @@\n jump\n-ed\n+s\n  over \n-a\n+the\n  laz\n';
-        // // The second patch must be "-21,17 +21,18", not "-22,17 +21,18" due to rolling context.
+        // var expectedPatch = '';
+        
         // patches = dmp.patch_make(text2, text1);
         // assertEquals(expectedPatch, dmp.patch_toText(patches));
       
