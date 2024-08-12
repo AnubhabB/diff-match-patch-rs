@@ -52,10 +52,14 @@ pub struct DiffMatchPatch {
     checklines: Option<bool>,
     /// A default timeout in num milliseconda, defaults to 1000 (1 second)
     timeout: Option<u64>,
+    // At what point is no match declared (0.0 = perfection, 1.0 = very loose).
+    match_threshold: f32,
     // How far to search for a match (0 = exact location, 1000+ = broad match).
     // A match this many characters away from the expected location will add
     // 1.0 to the score (0.0 is a perfect match).
     // int Match_Distance;
+    match_distance: usize,
+
     // When deleting a large block of text (over ~64 characters), how close does
     // the contents have to match the expected contents. (0.0 = perfection,
     // 1.0 = very loose).  Note that Match_Threshold controls how closely the
@@ -73,8 +77,10 @@ impl Default for DiffMatchPatch {
         Self {
             checklines: Some(true),
             timeout: Some(1000),
-            patch_margin: 4,
+            match_threshold: 0.5,
+            match_distance: 1000,
             match_max_bits: 32,
+            patch_margin: 4,
         }
     }
 }
@@ -99,6 +105,11 @@ impl DiffMatchPatch {
             .map_or(31536000_u64, |tout| if tout > 0 { tout } else { u64::MAX })
     }
 
+    // returns configured match_threshold
+    fn match_threshold(&self) -> f32 {
+        self.match_threshold
+    }
+
     // returns the current patch margin
     fn patch_margin(&self) -> u16 {
         self.patch_margin
@@ -107,6 +118,10 @@ impl DiffMatchPatch {
     // returns the configured max_bits
     fn match_max_bits(&self) -> usize {
         self.match_max_bits
+    }
+
+    fn match_distance(&self) -> usize {
+        self.match_distance
     }
 
     fn diff_internal<'a>(
@@ -1372,6 +1387,187 @@ impl DiffMatchPatch {
     }
 }
 
+// Match methods
+impl DiffMatchPatch {
+    fn match_internal(&self, text: &[u8], pattern: &[u8], loc: usize) -> Option<usize> {
+        // Check for null inputs.
+        // Nothing to match.
+        if text.is_empty() {
+            return None;
+        }
+        
+        // loc = Math.max(0, Math.min(loc, text.length));
+        let loc = loc.min(text.len());
+
+        if text == pattern {
+            // Shortcut (potentially not guaranteed by the algorithm)
+            Some(0)
+        } else if &text[loc .. (loc + pattern.len()).min(text.len())] == pattern {
+            // Perfect match at the perfect spot!  (Includes case of null pattern)
+            Some(loc)
+        } else {
+            // Do a fuzzy compare.
+            // return this.match_bitap_(text, pattern, loc);
+            self.match_bitap(text, pattern, loc)
+        }
+    }
+
+    fn match_bitap(&self, text: &[u8], pattern: &[u8], loc: usize) -> Option<usize> {
+        if pattern.len() > self.match_max_bits() {
+            todo!("Throw error");
+        }
+
+        let alphabet = Self::match_alphabet(pattern);
+        println!("Alphabet: {:?}", alphabet.iter().map(|(&a, v)| (a as char, v)).collect::<HashMap<_, _>>());
+        // Highest score beyond which we give up.
+        let mut score_thres = self.match_threshold();
+        println!("Score thres init: {score_thres}");
+        // Is there a nearby exact match? (speedup)
+        if let Some(best_loc) = text.windows(pattern.len()).step_by(1).skip(loc).position(|p| p == pattern).map(|pos| pos + loc) {
+            score_thres = self.bitap_score(
+                loc,
+                pattern.len(),
+                0,
+                best_loc
+            ).min(score_thres);
+            println!("Score thres fwd: {score_thres} best_loc[{best_loc}]");
+            // What about in the other direction? (speedup)
+            // best_loc = text.lastIndexOf(pattern, loc + pattern.length);
+            if let Some(best_loc_rev) = text
+                .windows(pattern.len())
+                .step_by(1)
+                .skip(loc)
+                .rev()
+                .position(|p| p == pattern)
+                .map(|pos| text.len() - pos - pattern.len()) {
+                score_thres = self.bitap_score(loc, pattern.len(), 0, best_loc_rev);
+                println!("Score thres rev: {score_thres} best_loc_rev[{best_loc_rev}]");
+            }
+        }
+
+        // Initialise the bit arrays.
+        let matchmask = 1 << (pattern.len() - 1);
+        println!("Matchmask: {matchmask}");
+        // var matchmask = 1 << (pattern.length - 1);
+        let mut best_loc = None;
+
+        let mut bin_min;
+        let mut bin_mid;
+        let mut bin_max = pattern.len() + text.len();
+        let mut last_rd = vec![];
+
+        for d in 0 .. pattern.len() {
+            // Scan for the best match; each iteration allows for one more error.
+            // Run a binary search to determine how far from 'loc' we can stray at
+            // this error level.
+            bin_min = 0;
+            bin_mid = bin_max;
+            println!("Loop at {d}: bin_min[{bin_min}] bin_mid[{bin_mid}] bin_max[{bin_max}]");
+
+            while bin_min < bin_mid {
+                let score = self.bitap_score(loc, pattern.len(), d, loc + bin_mid);
+                if score <= score_thres {
+                    bin_min = bin_mid;
+                } else {
+                    bin_max = bin_mid;
+                }
+
+                bin_mid = (bin_max - bin_min) / 2 + bin_min;
+                println!("While: score[{score}] bin_min[{bin_min}] bin_mid[{bin_mid}] bin_max[{bin_max}]");
+            }
+
+            // Use the result from this iteration as the maximum for the next.
+            bin_max = bin_mid;
+            let mut start = if loc > bin_mid { 1.max(loc - bin_mid + 1) } else { 1 };
+            let finish = (loc + bin_mid).min(text.len()) + pattern.len();
+            println!("Start[{start}] Finish[{finish}]");
+
+            let mut rd = vec![0; finish + 2];
+            rd[finish + 1] = (1 << d) - 1;
+
+            // for j in (start .. finish + 1).rev() {                
+            let mut j = finish;
+            while j >= start {
+                let char_match = if text.len() < j {
+                    0
+                } else {
+                    alphabet.get(&text[j - 1]).map_or(0, |&v| v)
+                };
+                println!("Loop 2: {j} {char_match} last_rd[{}]", last_rd.len());
+                rd[j] = if d == 0 {
+                    // first pass: exact match
+                    ((rd[j + 1] << 1) | 1) & char_match
+                } else {
+                    // Subsequent passes: fuzzy match.
+                    ((rd[j + 1] << 1) | 1) & char_match |
+                    (((last_rd[j + 1] | last_rd[j]) << 1) | 1_usize) |
+                    last_rd[j + 1]
+                };
+                println!("Loop 2: rd[{j}] -> {}", rd[j]);
+                if (rd[j] & matchmask) != 0 {
+                    let score = self.bitap_score(loc, pattern.len(), d, j - 1);
+                    // This match will almost certainly be better than any existing
+                    // match.  But check anyway.
+                    println!("Loop 2: inner score [{score}] score_thres[{score_thres}]");
+                    if score <= score_thres {
+                        score_thres = score;
+                        let bst_loc = j - 1;
+                        println!("Loop 2: best_loc[{bst_loc}] orig_loc[{loc}]");
+                        best_loc = Some(bst_loc);
+                        if bst_loc > loc {
+                            // When passing loc, don't exceed our current distance from loc.
+                            start = 1.max(if loc > bst_loc { loc - bst_loc } else { 0 });
+                            println!("Start: {start}");
+                        } else {
+                            // Already passed loc, downhill from here on in.
+                            break;
+                        }
+                    }
+                }
+
+                j -= 1;
+            }
+            // No hope for a (better) match at greater error levels.
+            if self.bitap_score(loc, pattern.len(), d + 1, loc) > score_thres {
+                break;
+            }
+            last_rd.clone_from(&rd);
+        }
+        
+        best_loc
+    }
+
+    fn match_alphabet(pattern: &[u8]) -> HashMap<u8, usize> {
+        let mut map = HashMap::with_capacity(pattern.len());
+
+        pattern.iter()
+            .enumerate()
+            .for_each(|(i, &p)| {
+                let v =  map.entry(p).or_insert(0_usize);
+                *v |= 1 << (pattern.len() - i - 1)
+            });
+
+        map
+    }
+
+    // Compute and return the score for a match with e errors and x location.
+    // Accesses loc and pattern through being a closure.
+    fn bitap_score(&self, org_loc: usize, pattern_len: usize, errs: usize, loc: usize) -> f32 {
+        let accuracy = errs as f32 / pattern_len as f32;
+        let proximity = (org_loc as i32 - loc as i32).abs();
+
+        if self.match_distance() == 0 {
+            if proximity > 0 {
+                return 1.
+            } else {
+                return accuracy
+            }
+        }
+
+        accuracy + proximity as f32 / self.match_distance() as f32
+    }
+}
+
 // Patch Methods
 #[derive(Debug, Default, Clone)]
 pub struct Patch {
@@ -1804,8 +2000,8 @@ impl DiffMatchPatch {
         todo!()
     }
 
-    pub fn match_main(text: &str, pattern: &str, loc: ()) -> () {
-        todo!()
+    pub fn match_main(&self, text: &str, pattern: &str, loc: usize) -> Option<usize> {
+        self.match_internal(text.as_bytes(), pattern.as_bytes(), loc)
     }
 
     pub fn patch_make(&self, input: PatchInput) -> Patches {
@@ -1936,7 +2132,7 @@ impl DiffMatchPatch {
 
 #[cfg(test)]
 mod tests {
-    use std::time::{Duration, Instant};
+    use std::{collections::HashMap, time::{Duration, Instant}};
 
     use crate::dmp::{Diff, HalfMatch, LineToChars};
 
@@ -1949,9 +2145,6 @@ mod tests {
     //     'testDiffDelta',
     //     'testDiffXIndex',
     //     'testDiffLevenshtein',
-    //     'testMatchAlphabet',
-    //     'testMatchBitap',
-    //     'testMatchMain',
     //     'testPatchObj',
     //     'testPatchApply'
     // ];
@@ -3179,5 +3372,86 @@ mod tests {
             "@@ -2,32 +2,32 @@\n bcdefghij , h : \n-0\n+1\n  , t : 1 abcdef\n@@ -29,32 +29,32 @@\n bcdefghij , h : \n-0\n+1\n  , t : 1 abcdef\n",
             DiffMatchPatch::patch_to_text(&patches)
         );
+    }
+
+    #[test]
+    fn test_match_alphabet() {
+        // Initialise the bitmasks for Bitap.
+        // Unique.
+        assert_eq!(HashMap::from([(b'a', 4), (b'b', 2), (b'c', 1)]), DiffMatchPatch::match_alphabet(b"abc"));
+
+        // Duplicates.
+        assert_eq!(HashMap::from([(b'a', 37), (b'b', 18), (b'c', 8)]), DiffMatchPatch::match_alphabet(b"abcaba"))
+    }
+
+    #[test]
+    fn test_match_bitap() {
+        // Bitap algorithm.
+        let mut dmp = DiffMatchPatch { match_distance: 100, ..Default::default() };
+
+        // Exact matches.
+        assert_eq!(Some(5), dmp.match_bitap(b"abcdefghijk", b"fgh", 5));
+        assert_eq!(Some(5), dmp.match_bitap(b"abcdefghijk", b"fgh", 0));
+
+        // Fuzzy matches.
+        assert_eq!(Some(4), dmp.match_bitap(b"abcdefghijk", b"efxhi", 0));
+        assert_eq!(Some(2), dmp.match_bitap(b"abcdefghijk", b"cdefxyhijk", 5));
+        assert_eq!(None, dmp.match_bitap(b"abcdefghijk", b"bxy", 1));
+
+        // Overflow.
+        assert_eq!(Some(2), dmp.match_bitap(b"123456789xx0", b"3456789x0", 2));
+
+        // Threshold test.
+        dmp.match_threshold = 0.4;
+        assert_eq!(Some(4), dmp.match_bitap(b"abcdefghijk", b"efxyhi", 1));
+
+        // dmp.Match_Threshold = 0.3;
+        dmp.match_threshold = 0.3;
+        assert_eq!(None, dmp.match_bitap(b"abcdefghijk", b"efxyhi", 1));
+
+        dmp.match_threshold = 0.;
+        assert_eq!(Some(1), dmp.match_bitap(b"abcdefghijk", b"bcdef", 1));
+
+        dmp.match_threshold = 0.5;
+
+        // Multiple select.
+        assert_eq!(Some(0), dmp.match_bitap(b"abcdexyzabcde", b"abccde", 3));
+        assert_eq!(Some(8), dmp.match_bitap(b"abcdexyzabcde", b"abccde", 5));
+
+        // Distance test.
+        dmp.match_distance = 10;
+        assert_eq!(None, dmp.match_bitap(b"abcdefghijklmnopqrstuvwxyz", b"abcdefg", 24));
+        assert_eq!(Some(0), dmp.match_bitap(b"abcdefghijklmnopqrstuvwxyz", b"abcdxxefg", 1));
+
+        dmp.match_distance = 1000;
+        assert_eq!(Some(0), dmp.match_bitap(b"abcdefghijklmnopqrstuvwxyz", b"abcdefg", 24));
+    }
+
+    #[test]
+    fn test_match_main() {
+        let dmp = DiffMatchPatch::default();
+        // Full match.
+        // Shortcut matches.
+        assert_eq!(Some(0), dmp.match_internal(b"abcdef", b"abcdef", 1000));
+        assert_eq!(None, dmp.match_internal(b"", b"abcdef", 1));
+        assert_eq!(Some(3), dmp.match_internal(b"abcdef", b"", 3));
+        assert_eq!(Some(3), dmp.match_internal(b"abcdef", b"de", 3));
+
+        // Beyond end match.
+        assert_eq!(Some(3), dmp.match_internal(b"abcdef", b"defy", 4));
+
+        // Oversized pattern.
+        assert_eq!(Some(0), dmp.match_internal(b"abcdef", b"abcdefy", 0));
+
+        // Complex match.
+        assert_eq!(Some(4), dmp.match_internal(b"I am the very model of a modern major general.", b" that berry ", 5));
+
+        // Test null inputs.
+        // try {
+        //     dmp.match_main(null, null, 0);
+        //     assertEquals(Error, null);
+        // } catch (e) {
+        //     // Exception expected.
+        // }
     }
 }
