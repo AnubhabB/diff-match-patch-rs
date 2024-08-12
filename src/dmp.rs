@@ -1870,19 +1870,55 @@ impl DiffMatchPatch {
         // 20, but the first patch was found at 12, delta is 2 and the second patch
         // has an effective expected position of 22.
         let mut delta = 0;
-        // let mut results = vec![];
+        let mut results = vec![];
 
-        patches.iter().for_each(|p| {
+        patches.iter().enumerate().for_each(|(x, p)| {
             let expected_loc = p.start2 + delta;
             let txt_old = Self::diff_text_old(&p.diffs);
 
-            let start_loc = if txt_old.len() > self.match_max_bits() {
+            let (start_loc, end_loc) = if txt_old.len() > self.match_max_bits() {
                 // patch_splitMax will only provide an oversized pattern in the case of
                 // a monster delete.
-                todo!()
+                if let Some(sl) = self.match_internal(&source, &txt_old[.. self.match_max_bits()], expected_loc) {
+                    let el = self.match_internal(&source, &txt_old[txt_old.len() - self.match_max_bits() ..], expected_loc + txt_old.len() - self.match_max_bits());
+
+                    if el.is_none() || Some(sl) >= el {
+                        // Can't find valid trailing context.  Drop this patch.
+                        (None, el)
+                    } else {
+                        (Some(sl), el)
+                    }
+                } else {
+                    (None, None)
+                }
             } else {
-                todo!()
+                (self.match_internal(&source, &txt_old, expected_loc), None)
             };
+
+            if let Some(sl) = start_loc {
+                // Found a match.  :)
+                results[x] = true;
+                delta = sl - expected_loc;
+
+                let txt_new = if let Some(el) = end_loc {
+                    // safeMid(text, start_loc, end_loc + Match_MaxBits - start_loc);
+                    &source[sl .. el + self.match_max_bits() - sl]
+                } else {
+                    &source[sl .. txt_old.len()]
+                };
+
+                if txt_old == txt_new {
+                    // Perfect match, just shove the replacement text in.
+                    source = [&source[..sl], &Self::diff_text_new(&p.diffs), &source[sl + txt_old.len() ..]].concat();
+                } else {
+                    todo!("anubhab")
+                }
+            } else {
+                // No match found.  :(
+                results[x] = false;
+                // Subtract the delta for this failed patch from subsequent patches.
+                delta -= p.length2 - p.length1;
+            }
         });
         todo!()
     }
