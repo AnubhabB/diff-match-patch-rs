@@ -1385,11 +1385,6 @@ impl DiffMatchPatch {
 
 
     fn patch_make_internal(&self, txt: &[u8], diffs: &[Diff]) -> Result<Patches, ()> {
-        // The null cases
-        if txt.is_empty() {
-            return Ok(vec![])
-        }
-
         // No diffs -> no patches
         if diffs.is_empty() {
             return Ok(Vec::new());
@@ -1538,69 +1533,74 @@ impl DiffMatchPatch {
         todo!()
     }
 
-    fn patch_add_padding(&self, patches: &Patches) {
-        let pad_len = self.patch_margin();
+    fn patch_add_padding(&self, patches: &mut Patches) -> Vec<u8> {
+        let pad_len = self.patch_margin() as usize;
         
         let null_pad = (1 .. pad_len + 1).filter_map(|c| {
-            char::from_u32(c as u32)
+            char::from_u32(c as u32).map(|c_| c_ as u8)
         }).collect::<Vec<_>>();
 
-        println!("Null pad! {null_pad:?}");
-        // let null_pad = ()
-        // short paddingLength = Patch_Margin;
-        // QString nullPadding = "";
-        // for (short x = 1; x <= paddingLength; x++) {
-        //     nullPadding += QChar((ushort)x);
-        // }
+        // Bump all the patches forward.
+        patches.iter_mut()
+        .for_each(|p| {
+            p.start1 += pad_len;
+            p.start2 += pad_len;
+        });
 
-        // // Bump all the patches forward.
-        // QMutableListIterator<Patch> pointer(patches);
-        // while (pointer.hasNext()) {
-        //     Patch &aPatch = pointer.next();
-        //     aPatch.start1 += paddingLength;
-        //     aPatch.start2 += paddingLength;
-        // }
+        // Add some padding on start of first diff.
+        if let Some(first_patch) = patches.first_mut() {
+            let (add_null_pad, pad_len_gt_txt_len) = if let Some(fd) = first_patch.diffs.first() {
+                (fd.0 != Ops::Equal, pad_len > fd.1.len())
+            } else {
+                (true, false)
+            };
 
-        // // Add some padding on start of first diff.
-        // Patch &firstPatch = patches.first();
-        // QList<Diff> &firstPatchDiffs = firstPatch.diffs;
-        // if (firstPatchDiffs.empty() || firstPatchDiffs.first().operation != EQUAL) {
-        //     // Add nullPadding equality.
-        //     firstPatchDiffs.prepend(Diff(EQUAL, nullPadding));
-        //     firstPatch.start1 -= paddingLength;  // Should be 0.
-        //     firstPatch.start2 -= paddingLength;  // Should be 0.
-        //     firstPatch.length1 += paddingLength;
-        //     firstPatch.length2 += paddingLength;
-        // } else if (paddingLength > firstPatchDiffs.first().text.length()) {
-        //     // Grow first equality.
-        //     Diff &firstDiff = firstPatchDiffs.first();
-        //     int extraLength = paddingLength - firstDiff.text.length();
-        //     firstDiff.text = safeMid(nullPadding, firstDiff.text.length(),
-        //         paddingLength - firstDiff.text.length()) + firstDiff.text;
-        //     firstPatch.start1 -= extraLength;
-        //     firstPatch.start2 -= extraLength;
-        //     firstPatch.length1 += extraLength;
-        //     firstPatch.length2 += extraLength;
-        // }
+            if add_null_pad {
+                first_patch.diffs.insert(0, Diff::equal(&null_pad));
+                first_patch.start1 -= pad_len;
+                first_patch.start2 -= pad_len;
+                first_patch.length1 += pad_len;
+                first_patch.length2 += pad_len;
+            } else if pad_len_gt_txt_len {
+                // Grow first equality.
+                if let Some(fd) = first_patch.diffs.first_mut() {
+                    let extra_len = pad_len - fd.1.len();
+                    fd.1 = [&null_pad[fd.1.len() ..], &fd.1[..]].concat();
+                    first_patch.start1 -= extra_len;
+                    first_patch.start2 -= extra_len;
+                    first_patch.length1 += extra_len;
+                    first_patch.length2 += extra_len;
+                }
+            }
+        }
 
-        // // Add some padding on end of last diff.
-        // Patch &lastPatch = patches.first();
-        // QList<Diff> &lastPatchDiffs = lastPatch.diffs;
-        // if (lastPatchDiffs.empty() || lastPatchDiffs.last().operation != EQUAL) {
-        //     // Add nullPadding equality.
-        //     lastPatchDiffs.append(Diff(EQUAL, nullPadding));
-        //     lastPatch.length1 += paddingLength;
-        //     lastPatch.length2 += paddingLength;
-        // } else if (paddingLength > lastPatchDiffs.last().text.length()) {
-        //     // Grow last equality.
-        //     Diff &lastDiff = lastPatchDiffs.last();
-        //     int extraLength = paddingLength - lastDiff.text.length();
-        //     lastDiff.text += nullPadding.left(extraLength);
-        //     lastPatch.length1 += extraLength;
-        //     lastPatch.length2 += extraLength;
-        // }
+        // Add some padding on end of last diff.
+        if let Some(last_patch) = patches.last_mut() {
+            let (add_null_pad, pad_len_gt_txt_len) = if let Some(ld) = last_patch.diffs.last() {
+                (ld.0 != Ops::Equal, pad_len > ld.1.len())
+            } else {
+                (true, false)
+            };
 
-        // return nullPadding;
+            // Add nullPadding equality.
+            if add_null_pad {
+                last_patch.diffs.push(Diff::equal(&null_pad));
+                last_patch.length1 += pad_len;
+                last_patch.length2 += pad_len;
+            } else if pad_len_gt_txt_len {
+                // Grow last equality.
+                if let Some(ld) = last_patch.diffs.last_mut() {
+                    let extra_len = pad_len - ld.1.len();
+                    let mut padd = null_pad[..extra_len].to_vec();
+                    ld.1.append(&mut padd);
+
+                    last_patch.length1 += extra_len;
+                    last_patch.length2 += extra_len;
+                }
+            }
+        }
+
+        null_pad
     }
 }
 
@@ -2882,24 +2882,30 @@ mod tests {
     fn test_patch_add_padding() {
         let dmp = DiffMatchPatch::default();
         // Both edges full.
-        let patches = dmp.patch_make(PatchInput::Texts("", "test"));
+        let mut patches = dmp.patch_make(PatchInput::Texts("", "test"));
         assert_eq!("@@ -0,0 +1,4 @@\n+test\n", DiffMatchPatch::patch_to_text(&patches));
-        dmp.patch_add_padding(&patches);
-        // var patches = dmp.patch_make('', 'test');
-        // assertEquals('@@ -0,0 +1,4 @@\n+test\n', dmp.patch_toText(patches));
-        // dmp.patch_addPadding(patches);
-        // assertEquals('@@ -1,8 +1,12 @@\n %01%02%03%04\n+test\n %01%02%03%04\n', dmp.patch_toText(patches));
+        dmp.patch_add_padding(&mut patches);
+        assert_eq!(
+            percent_encoding::percent_decode(b"@@ -1,8 +1,12 @@\n %01%02%03%04\n+test\n %01%02%03%04\n").decode_utf8().unwrap(),
+            DiffMatchPatch::patch_to_text(&patches)
+        );
 
-        // // Both edges partial.
-        // // patches = dmp.patch_make('XY', 'XtestY');
-        // // assertEquals('@@ -1,2 +1,6 @@\n X\n+test\n Y\n', dmp.patch_toText(patches));
-        // // dmp.patch_addPadding(patches);
-        // // assertEquals('@@ -2,8 +2,12 @@\n %02%03%04X\n+test\n Y%01%02%03\n', dmp.patch_toText(patches));
+        // Both edges partial.
+        let mut patches = dmp.patch_make(PatchInput::Texts("XY", "XtestY"));
+        assert_eq!("@@ -1,2 +1,6 @@\n X\n+test\n Y\n", DiffMatchPatch::patch_to_text(&patches));
+        dmp.patch_add_padding(&mut patches);
+        assert_eq!(
+            percent_encoding::percent_decode(b"@@ -2,8 +2,12 @@\n %02%03%04X\n+test\n Y%01%02%03\n").decode_utf8().unwrap(),
+            DiffMatchPatch::patch_to_text(&patches)
+        );
 
-        // // Both edges none.
-        // // patches = dmp.patch_make('XXXXYYYY', 'XXXXtestYYYY');
-        // // assertEquals('@@ -1,8 +1,12 @@\n XXXX\n+test\n YYYY\n', dmp.patch_toText(patches));
-        // // dmp.patch_addPadding(patches);
-        // // assertEquals('@@ -5,8 +5,12 @@\n XXXX\n+test\n YYYY\n', dmp.patch_toText(patches));
+        // Both edges none.
+        let mut patches = dmp.patch_make(PatchInput::Texts("XXXXYYYY", "XXXXtestYYYY"));
+        assert_eq!("@@ -1,8 +1,12 @@\n XXXX\n+test\n YYYY\n", DiffMatchPatch::patch_to_text(&patches));
+        dmp.patch_add_padding(&mut patches);
+        assert_eq!(
+            percent_encoding::percent_decode(b"@@ -5,8 +5,12 @@\n XXXX\n+test\n YYYY\n").decode_utf8().unwrap(),
+            DiffMatchPatch::patch_to_text(&patches)
+        );
     }
 }
