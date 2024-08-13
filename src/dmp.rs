@@ -81,7 +81,7 @@ impl Default for DiffMatchPatch {
             match_distance: 1000,
             match_max_bits: 32,
             patch_margin: 4,
-            delete_threshold: 0.5
+            delete_threshold: 0.5,
         }
     }
 }
@@ -1133,7 +1133,7 @@ impl DiffMatchPatch {
         }
     }
 
-    fn cleanup_efficiency(diffs: &mut Vec<Diff>) {
+    fn cleanup_efficiency(&self, diffs: &mut Vec<Diff>) {
         todo!()
     }
 
@@ -1173,7 +1173,7 @@ impl DiffMatchPatch {
                 return last_char2;
             }
         }
-        
+
         // Add the remaining character length.
         last_char2 + (loc - last_char1)
     }
@@ -1437,31 +1437,24 @@ impl DiffMatchPatch {
 // Match methods
 impl DiffMatchPatch {
     fn match_internal(&self, text: &[u8], pattern: &[u8], loc: usize) -> Option<usize> {
-        println!(
-            "match_internal: {} {} {loc}",
-            std::str::from_utf8(text).unwrap(),
-            std::str::from_utf8(pattern).unwrap()
-        );
         // Check for null inputs.
         // Nothing to match.
         if text.is_empty() {
             return None;
         }
-        
+
         // loc = Math.max(0, Math.min(loc, text.length));
         let loc = loc.min(text.len());
-        println!("match_internal: loc[{loc}]");
+
         if text == pattern {
             // Shortcut (potentially not guaranteed by the algorithm)
             Some(0)
-        } else if &text[loc .. (loc + pattern.len()).min(text.len())] == pattern {
+        } else if &text[loc..(loc + pattern.len()).min(text.len())] == pattern {
             // Perfect match at the perfect spot!  (Includes case of null pattern)
-            println!("match_internal: is perfect match");
             Some(loc)
         } else {
             // Do a fuzzy compare.
             // return this.match_bitap_(text, pattern, loc);
-            println!("match_internal: Fuzzy match");
             self.match_bitap(text, pattern, loc)
         }
     }
@@ -1475,16 +1468,19 @@ impl DiffMatchPatch {
 
         // Highest score beyond which we give up.
         let mut score_thres = self.match_threshold();
-        
+
         // Is there a nearby exact match? (speedup)
-        if let Some(best_loc) = text.windows(pattern.len()).step_by(1).skip(loc).position(|p| p == pattern).map(|pos| pos + loc) {
-            score_thres = self.bitap_score(
-                loc,
-                pattern.len(),
-                0,
-                best_loc
-            ).min(score_thres);
-            
+        if let Some(best_loc) = text
+            .windows(pattern.len())
+            .step_by(1)
+            .skip(loc)
+            .position(|p| p == pattern)
+            .map(|pos| pos + loc)
+        {
+            score_thres = self
+                .bitap_score(loc, pattern.len(), 0, best_loc)
+                .min(score_thres);
+
             // What about in the other direction? (speedup)
             // best_loc = text.lastIndexOf(pattern, loc + pattern.length);
             if let Some(best_loc_rev) = text
@@ -1493,14 +1489,15 @@ impl DiffMatchPatch {
                 .skip(loc)
                 .rev()
                 .position(|p| p == pattern)
-                .map(|pos| text.len() - pos - pattern.len()) {
+                .map(|pos| text.len() - pos - pattern.len())
+            {
                 score_thres = self.bitap_score(loc, pattern.len(), 0, best_loc_rev);
             }
         }
 
         // Initialise the bit arrays.
         let matchmask = 1 << (pattern.len() - 1);
-        
+
         // var matchmask = 1 << (pattern.length - 1);
         let mut best_loc = None;
 
@@ -1509,7 +1506,7 @@ impl DiffMatchPatch {
         let mut bin_max = pattern.len() + text.len();
         let mut last_rd = vec![];
 
-        for d in 0 .. pattern.len() {
+        for d in 0..pattern.len() {
             // Scan for the best match; each iteration allows for one more error.
             // Run a binary search to determine how far from 'loc' we can stray at
             // this error level.
@@ -1529,13 +1526,16 @@ impl DiffMatchPatch {
 
             // Use the result from this iteration as the maximum for the next.
             bin_max = bin_mid;
-            let mut start = if loc > bin_mid { 1.max(loc - bin_mid + 1) } else { 1 };
+            let mut start = if loc > bin_mid {
+                1.max(loc - bin_mid + 1)
+            } else {
+                1
+            };
             let finish = (loc + bin_mid).min(text.len()) + pattern.len();
 
             let mut rd = vec![0; finish + 2];
             rd[finish + 1] = (1 << d) - 1;
 
-            // for j in (start .. finish + 1).rev() {                
             let mut j = finish;
             while j >= start {
                 let char_match = if text.len() < j {
@@ -1543,26 +1543,25 @@ impl DiffMatchPatch {
                 } else {
                     alphabet.get(&text[j - 1]).map_or(0, |&v| v)
                 };
-                
+
                 rd[j] = if d == 0 {
                     // first pass: exact match
                     ((rd[j + 1] << 1) | 1) & char_match
                 } else {
                     // Subsequent passes: fuzzy match.
-                    ((rd[j + 1] << 1) | 1) & char_match |
-                    (((last_rd[j + 1] | last_rd[j]) << 1) | 1_usize) |
-                    last_rd[j + 1]
+                    ((rd[j + 1] << 1) | 1) & char_match
+                        | (((last_rd[j + 1] | last_rd[j]) << 1) | 1_usize)
+                        | last_rd[j + 1]
                 };
-                
+
                 if (rd[j] & matchmask) != 0 {
                     let score = self.bitap_score(loc, pattern.len(), d, j - 1);
                     // This match will almost certainly be better than any existing
                     // match.  But check anyway.
-                    println!("match_bitap @{j}: score[{score}] score_thres[{score_thres}]");
                     if score <= score_thres {
                         score_thres = score;
                         let bst_loc = j - 1;
-                        
+
                         best_loc = Some(bst_loc);
                         if bst_loc > loc {
                             // When passing loc, don't exceed our current distance from loc.
@@ -1582,19 +1581,17 @@ impl DiffMatchPatch {
             }
             last_rd.clone_from(&rd);
         }
-        
+
         best_loc
     }
 
     fn match_alphabet(pattern: &[u8]) -> HashMap<u8, usize> {
         let mut map = HashMap::with_capacity(pattern.len());
 
-        pattern.iter()
-            .enumerate()
-            .for_each(|(i, &p)| {
-                let v =  map.entry(p).or_insert(0_usize);
-                *v |= 1 << (pattern.len() - i - 1)
-            });
+        pattern.iter().enumerate().for_each(|(i, &p)| {
+            let v = map.entry(p).or_insert(0_usize);
+            *v |= 1 << (pattern.len() - i - 1)
+        });
 
         map
     }
@@ -1607,9 +1604,9 @@ impl DiffMatchPatch {
 
         if self.match_distance() == 0 {
             if proximity > 0 {
-                return 1.
+                return 1.;
             } else {
-                return accuracy
+                return accuracy;
             }
         }
 
@@ -1906,13 +1903,12 @@ impl DiffMatchPatch {
             return (source.to_vec(), vec![]);
         }
 
-        let deadline = if let Some(i) = Instant::now().checked_add(
-            Duration::from_millis(self.timeout())
-        ) {
-            i
-        } else {
-            todo!()
-        };
+        let deadline =
+            if let Some(i) = Instant::now().checked_add(Duration::from_millis(self.timeout())) {
+                i
+            } else {
+                todo!()
+            };
 
         // To avoid changes to original patches!!
         let mut patches = patches.clone();
@@ -1932,13 +1928,17 @@ impl DiffMatchPatch {
         patches.iter().enumerate().for_each(|(x, p)| {
             let expected_loc = p.start2 + delta;
             let txt_old = Self::diff_text_old(&p.diffs);
-            println!("patch_apply [{x}]: expected_loc[{expected_loc}]");
             let (start_loc, end_loc) = if txt_old.len() > self.match_max_bits() {
                 // patch_splitMax will only provide an oversized pattern in the case of
                 // a monster delete.
-                if let Some(sl) = self.match_internal(&source, &txt_old[.. self.match_max_bits()], expected_loc) {
-                    println!("patch_apply > max_bits: after match main with text[{}] txt_old[{}] start_loc[{sl}]", std::str::from_utf8(&source).unwrap(), std::str::from_utf8(&txt_old[.. self.match_max_bits()]).unwrap());
-                    let el = self.match_internal(&source, &txt_old[txt_old.len() - self.match_max_bits() ..], expected_loc + txt_old.len() - self.match_max_bits());
+                if let Some(sl) =
+                    self.match_internal(&source, &txt_old[..self.match_max_bits()], expected_loc)
+                {
+                    let el = self.match_internal(
+                        &source,
+                        &txt_old[txt_old.len() - self.match_max_bits()..],
+                        expected_loc + txt_old.len() - self.match_max_bits(),
+                    );
 
                     if el.is_none() || Some(sl) >= el {
                         // Can't find valid trailing context.  Drop this patch.
@@ -1950,62 +1950,55 @@ impl DiffMatchPatch {
                     (None, None)
                 }
             } else {
-                println!(
-                    "patch_apply <= max_bits: before match_main with text[{}] txt_old[{}] start_loc[-1] expected_loc[{expected_loc}]",
-                    std::str::from_utf8(&source).unwrap(),
-                    std::str::from_utf8(&txt_old).unwrap(),
-                );
                 (self.match_internal(&source, &txt_old, expected_loc), None)
             };
-
-            println!("patch_apply [{x}]: {start_loc:?} {end_loc:?}");
 
             if let Some(sl) = start_loc {
                 // Found a match.  :)
                 results[x] = true;
                 delta = sl - expected_loc;
-                println!("patch_apply [{x}] delta[{delta}]");
 
                 let txt_new = if let Some(el) = end_loc {
                     // safeMid(text, start_loc, end_loc + Match_MaxBits - start_loc);
-                    &source[sl .. el + self.match_max_bits()]
+                    &source[sl..el + self.match_max_bits()]
                 } else {
-                    &source[sl .. sl + txt_old.len()]
+                    &source[sl..sl + txt_old.len()]
                 };
-                println!("patch_apply [{x}]: txt2[{}]", std::str::from_utf8(txt_new).unwrap());
 
                 if txt_old == txt_new {
-                    println!("patch_apply [{x}] - perfect match");
                     // Perfect match, just shove the replacement text in.
-                    source = [&source[..sl], &Self::diff_text_new(&p.diffs), &source[sl + txt_old.len() ..]].concat();
+                    source = [
+                        &source[..sl],
+                        &Self::diff_text_new(&p.diffs),
+                        &source[sl + txt_old.len()..],
+                    ]
+                    .concat();
                 } else {
                     // Imperfect match.  Run a diff to get a framework of equivalent indices.
                     let mut diffs = self.diff_internal(&txt_old, txt_new, false, deadline);
-                    println!("patch_apply: [{x}]: imperfect match. Diffs[{}]", diffs.len());
-                    if txt_old.len() > self.match_max_bits() && (Self::diff_levenshtein(&diffs) as f32 / txt_old.len() as f32) > self.delete_threshold() {
+                    if txt_old.len() > self.match_max_bits()
+                        && (Self::diff_levenshtein(&diffs) as f32 / txt_old.len() as f32)
+                            > self.delete_threshold()
+                    {
                         // The end points match, but the content is unacceptably bad.
                         results[x] = false;
                     } else {
                         Self::cleanup_semantic_lossless(&mut diffs);
-                        println!("patch_apply: [{x}] after lossless: diffs[{}]", diffs.len());
                         let mut idx1 = 0;
-                        diffs.iter()
-                        .for_each(|diff| {
+                        p.diffs.iter().for_each(|diff| {
                             if diff.0 != Ops::Equal {
                                 let idx2 = Self::x_index(&diffs, idx1);
                                 if diff.0 == Ops::Insert {
                                     // Insertion
-                                    source = [
-                                        &source[.. sl + idx2],
-                                        &diff.1,
-                                        &source[sl + idx2 ..]
-                                    ].concat();
+                                    source = [&source[..sl + idx2], &diff.1, &source[sl + idx2..]]
+                                        .concat();
                                 } else if diff.0 == Ops::Delete {
                                     // Deletion
                                     source = [
-                                        &source[.. sl + idx2],
-                                        &source[sl + Self::x_index(&diffs, idx1 + diff.1.len()) ..]
-                                    ].concat();
+                                        &source[..sl + idx2],
+                                        &source[sl + Self::x_index(&diffs, idx1 + diff.1.len())..],
+                                    ]
+                                    .concat();
                                 }
                             }
 
@@ -2024,7 +2017,7 @@ impl DiffMatchPatch {
         });
 
         // Strip the padding off.
-        source = source[null_pad.len() .. source.len() - null_pad.len()].to_vec();
+        source = source[null_pad.len()..source.len() - null_pad.len()].to_vec();
         (source, results)
     }
 
@@ -2110,8 +2103,8 @@ impl DiffMatchPatch {
     /// Returns:
     /// Vec of changes (Diff).
     pub fn diff_main(&self, old: &str, new: &str) -> Vec<Diff> {
-        let deadline = if let Some(i) = Instant::now()
-            .checked_add(Duration::from_millis(self.timeout())) {
+        let deadline =
+            if let Some(i) = Instant::now().checked_add(Duration::from_millis(self.timeout())) {
                 i
             } else {
                 todo!()
@@ -2128,8 +2121,8 @@ impl DiffMatchPatch {
         Self::cleanup_semantic(diffs)
     }
 
-    pub fn diff_cleanup_efficiency(diffs: &mut [Diff]) {
-        todo!()
+    pub fn diff_cleanup_efficiency(&self, diffs: &mut Vec<Diff>) {
+        self.cleanup_efficiency(diffs)
     }
 
     pub fn diff_levenshtein(diffs: &[Diff]) -> usize {
@@ -2137,8 +2130,7 @@ impl DiffMatchPatch {
         let mut insert = 0;
         let mut delete = 0;
 
-        diffs.iter()
-        .for_each(|diff| {
+        diffs.iter().for_each(|diff| {
             match diff.0 {
                 Ops::Insert => insert += diff.1.len(),
                 Ops::Delete => delete += diff.1.len(),
@@ -2286,14 +2278,19 @@ impl DiffMatchPatch {
         patches
     }
 
-    pub fn patch_apply(patches: &[Patch], source_txt: &str) -> (String, ()) {
-        todo!()
+    pub fn patch_apply(&self, patches: &Patches, source_txt: &str) -> (String, Vec<bool>) {
+        let (str_bytes, results) = self.patch_apply_internal(patches, source_txt.as_bytes());
+
+        (String::from_utf8(str_bytes).unwrap(), results)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashMap, time::{Duration, Instant}};
+    use std::{
+        collections::HashMap,
+        time::{Duration, Instant},
+    };
 
     use crate::dmp::{Diff, HalfMatch, LineToChars};
 
@@ -2946,21 +2943,21 @@ mod tests {
         let diffs = vec![
             Diff::delete(b"abc"),
             Diff::insert(b"1234"),
-            Diff::equal(b"xyz")
+            Diff::equal(b"xyz"),
         ];
         assert_eq!(4, DiffMatchPatch::diff_levenshtein(&diffs));
 
         let diffs = vec![
             Diff::equal(b"xyz"),
             Diff::delete(b"abc"),
-            Diff::insert(b"1234")
+            Diff::insert(b"1234"),
         ];
         assert_eq!(4, DiffMatchPatch::diff_levenshtein(&diffs));
 
         let diffs = vec![
             Diff::delete(b"abc"),
             Diff::equal(b"xyz"),
-            Diff::insert(b"1234")
+            Diff::insert(b"1234"),
         ];
         assert_eq!(7, DiffMatchPatch::diff_levenshtein(&diffs));
     }
@@ -2971,18 +2968,18 @@ mod tests {
         let diffs = vec![
             Diff::delete(b"a"),
             Diff::insert(b"1234"),
-            Diff::equal(b"xyz")
+            Diff::equal(b"xyz"),
         ];
         assert_eq!(5, DiffMatchPatch::x_index(&diffs, 2));
 
         let diffs = vec![
             Diff::equal(b"a"),
             Diff::delete(b"1234"),
-            Diff::equal(b"xyz")
+            Diff::equal(b"xyz"),
         ];
         assert_eq!(1, DiffMatchPatch::x_index(&diffs, 3));
     }
-    
+
     #[test]
     fn test_diff_common_overlap() {
         // Detect any suffix/prefix overlap.
@@ -3562,110 +3559,151 @@ mod tests {
 
     #[test]
     fn test_patch_apply() {
-        // checklines: Some(true),
-        // timeout: Some(1000),
-        // match_threshold: 0.5,
-        // match_distance: 1000,
-        // match_max_bits: 32,
-        // patch_margin: 4,
-        // delete_threshold: 0.5
-
         let mut dmp = DiffMatchPatch::default();
-        
+
         let patches = dmp.patch_make(PatchInput::Texts("", ""));
         let (txt, results) = dmp.patch_apply_internal(&patches, b"Hello world.");
-        assert_eq!(format!("{}\t{}", std::str::from_utf8(&txt).unwrap(), results.len()), "Hello world.\t0");
+        assert_eq!(
+            format!("{}\t{}", std::str::from_utf8(&txt).unwrap(), results.len()),
+            "Hello world.\t0"
+        );
 
-        let patches = dmp.patch_make(PatchInput::Texts("The quick brown fox jumps over the lazy dog.", "That quick brown fox jumped over a lazy dog."));
+        let patches = dmp.patch_make(PatchInput::Texts(
+            "The quick brown fox jumps over the lazy dog.",
+            "That quick brown fox jumped over a lazy dog.",
+        ));
 
         // Exact match
-        // assert_eq!((b"That quick brown fox jumped over a lazy dog.".to_vec(), vec![true, true]), dmp.patch_apply_internal(&patches, b"The quick brown fox jumps over the lazy dog."));
+        assert_eq!(
+            (
+                b"That quick brown fox jumped over a lazy dog.".to_vec(),
+                vec![true, true]
+            ),
+            dmp.patch_apply_internal(&patches, b"The quick brown fox jumps over the lazy dog.")
+        );
 
         // Partial match
-        assert_eq!((b"That quick red rabbit jumped over a tired tiger.".to_vec(), vec![true, true]), dmp.patch_apply_internal(&patches, b"The quick red rabbit jumps over the tired tiger."));
-        // results = dmp.patch_apply(patches, "");
-        // boolArray = results.second;
-        // resultStr = results.first + "\t" + (boolArray[0] ? "true" : "false") + "\t" + (boolArray[1] ? "true" : "false");
-        // assertEquals("patch_apply: Partial match.", "\ttrue\ttrue", resultStr);
+        assert_eq!(
+            (
+                b"That quick red rabbit jumped over a tired tiger.".to_vec(),
+                vec![true, true]
+            ),
+            dmp.patch_apply_internal(
+                &patches,
+                b"The quick red rabbit jumps over the tired tiger."
+            )
+        );
 
-        // results = dmp.patch_apply(patches, "I am the very model of a modern major general.");
-        // boolArray = results.second;
-        // resultStr = results.first + "\t" + (boolArray[0] ? "true" : "false") + "\t" + (boolArray[1] ? "true" : "false");
-        // assertEquals("patch_apply: Failed match.", "I am the very model of a modern major general.\tfalse\tfalse", resultStr);
+        // Failed match
+        assert_eq!(
+            (
+                b"I am the very model of a modern major general.".to_vec(),
+                vec![false, false]
+            ),
+            dmp.patch_apply_internal(&patches, b"I am the very model of a modern major general.")
+        );
 
-        // patches = dmp.patch_make("x1234567890123456789012345678901234567890123456789012345678901234567890y", "xabcy");
-        // results = dmp.patch_apply(patches, "x123456789012345678901234567890-----++++++++++-----123456789012345678901234567890y");
-        // boolArray = results.second;
-        // resultStr = results.first + "\t" + (boolArray[0] ? "true" : "false") + "\t" + (boolArray[1] ? "true" : "false");
-        // assertEquals("patch_apply: Big delete, small change.", "xabcy\ttrue\ttrue", resultStr);
+        // Big delete, small change
+        let patches = dmp.patch_make(PatchInput::Texts(
+            "x1234567890123456789012345678901234567890123456789012345678901234567890y",
+            "xabcy",
+        ));
+        assert_eq!((b"xabcy".to_vec(), vec![true, true]), dmp.patch_apply_internal(&patches, b"x123456789012345678901234567890-----++++++++++-----123456789012345678901234567890y"));
 
-        // patches = dmp.patch_make("x1234567890123456789012345678901234567890123456789012345678901234567890y", "xabcy");
-        // results = dmp.patch_apply(patches, "x12345678901234567890---------------++++++++++---------------12345678901234567890y");
-        // boolArray = results.second;
-        // resultStr = results.first + "\t" + (boolArray[0] ? "true" : "false") + "\t" + (boolArray[1] ? "true" : "false");
-        // assertEquals("patch_apply: Big delete, large change 1.", "xabc12345678901234567890---------------++++++++++---------------12345678901234567890y\tfalse\ttrue", resultStr);
+        // Big delete, large change
+        let patches = dmp.patch_make(PatchInput::Texts(
+            "x1234567890123456789012345678901234567890123456789012345678901234567890y",
+            "xabcy",
+        ));
+        assert_eq!((b"xabc12345678901234567890---------------++++++++++---------------12345678901234567890y".to_vec(), vec![false, true]), dmp.patch_apply_internal(&patches, b"x12345678901234567890---------------++++++++++---------------12345678901234567890y"));
 
-        // dmp.Patch_DeleteThreshold = 0.6f;
-        // patches = dmp.patch_make("x1234567890123456789012345678901234567890123456789012345678901234567890y", "xabcy");
-        // results = dmp.patch_apply(patches, "x12345678901234567890---------------++++++++++---------------12345678901234567890y");
-        // boolArray = results.second;
-        // resultStr = results.first + "\t" + (boolArray[0] ? "true" : "false") + "\t" + (boolArray[1] ? "true" : "false");
-        // assertEquals("patch_apply: Big delete, large change 2.", "xabcy\ttrue\ttrue", resultStr);
-        // dmp.Patch_DeleteThreshold = 0.5f;
+        dmp.delete_threshold = 0.6;
+        let patches = dmp.patch_make(PatchInput::Texts(
+            "x1234567890123456789012345678901234567890123456789012345678901234567890y",
+            "xabcy",
+        ));
+        assert_eq!((b"xabcy".to_vec(), vec![true, true]), dmp.patch_apply_internal(&patches, b"x12345678901234567890---------------++++++++++---------------12345678901234567890y"));
+        dmp.delete_threshold = 0.5;
 
-        // dmp.Match_Threshold = 0.0f;
-        // dmp.Match_Distance = 0;
-        // patches = dmp.patch_make("abcdefghijklmnopqrstuvwxyz--------------------1234567890", "abcXXXXXXXXXXdefghijklmnopqrstuvwxyz--------------------1234567YYYYYYYYYY890");
-        // results = dmp.patch_apply(patches, "ABCDEFGHIJKLMNOPQRSTUVWXYZ--------------------1234567890");
-        // boolArray = results.second;
-        // resultStr = results.first + "\t" + (boolArray[0] ? "true" : "false") + "\t" + (boolArray[1] ? "true" : "false");
-        // assertEquals("patch_apply: Compensate for failed patch.", "ABCDEFGHIJKLMNOPQRSTUVWXYZ--------------------1234567YYYYYYYYYY890\tfalse\ttrue", resultStr);
-        // dmp.Match_Threshold = 0.5f;
-        // dmp.Match_Distance = 1000;
+        // Compesate for failed patch
+        dmp.match_threshold = 0.;
+        dmp.match_distance = 0;
+        let patches = dmp.patch_make(PatchInput::Texts(
+            "abcdefghijklmnopqrstuvwxyz--------------------1234567890",
+            "abcXXXXXXXXXXdefghijklmnopqrstuvwxyz--------------------1234567YYYYYYYYYY890",
+        ));
+        assert_eq!(
+            (
+                b"ABCDEFGHIJKLMNOPQRSTUVWXYZ--------------------1234567YYYYYYYYYY890".to_vec(),
+                vec![false, true]
+            ),
+            dmp.patch_apply_internal(
+                &patches,
+                b"ABCDEFGHIJKLMNOPQRSTUVWXYZ--------------------1234567890"
+            )
+        );
+        dmp.match_threshold = 0.5;
+        dmp.match_distance = 1000;
 
-        // patches = dmp.patch_make("", "test");
-        // QString patchStr = dmp.patch_toText(patches);
-        // dmp.patch_apply(patches, "");
-        // assertEquals("patch_apply: No side effects.", patchStr, dmp.patch_toText(patches));
+        // No side-effects - kinds useless cos patches is not mutable in rust
+        let patches = dmp.patch_make(PatchInput::Texts("", "test"));
+        let srcstr = DiffMatchPatch::patch_to_text(&patches);
+        dmp.patch_apply_internal(&patches, b"");
+        assert_eq!(srcstr, DiffMatchPatch::patch_to_text(&patches));
 
-        // patches = dmp.patch_make("The quick brown fox jumps over the lazy dog.", "Woof");
-        // patchStr = dmp.patch_toText(patches);
-        // dmp.patch_apply(patches, "The quick brown fox jumps over the lazy dog.");
-        // assertEquals("patch_apply: No side effects with major delete.", patchStr, dmp.patch_toText(patches));
+        let patches = dmp.patch_make(PatchInput::Texts(
+            "The quick brown fox jumps over the lazy dog.",
+            "Woof",
+        ));
+        let srcstr = DiffMatchPatch::patch_to_text(&patches);
+        dmp.patch_apply_internal(&patches, b"The quick brown fox jumps over the lazy dog.");
+        assert_eq!(srcstr, DiffMatchPatch::patch_to_text(&patches));
 
-        // patches = dmp.patch_make("", "test");
-        // results = dmp.patch_apply(patches, "");
-        // boolArray = results.second;
-        // resultStr = results.first + "\t" + (boolArray[0] ? "true" : "false");
-        // assertEquals("patch_apply: Edge exact match.", "test\ttrue", resultStr);
+        // Edge exact match
+        let patches = dmp.patch_make(PatchInput::Texts("", "test"));
+        assert_eq!(
+            (b"test".to_vec(), vec![true]),
+            dmp.patch_apply_internal(&patches, b"")
+        );
 
-        // patches = dmp.patch_make("XY", "XtestY");
-        // results = dmp.patch_apply(patches, "XY");
-        // boolArray = results.second;
-        // resultStr = results.first + "\t" + (boolArray[0] ? "true" : "false");
-        // assertEquals("patch_apply: Near edge exact match.", "XtestY\ttrue", resultStr);
+        // Near edge exact match
+        let patches = dmp.patch_make(PatchInput::Texts("XY", "XtestY"));
+        assert_eq!(
+            (b"XtestY".to_vec(), vec![true]),
+            dmp.patch_apply_internal(&patches, b"XY")
+        );
 
-        // patches = dmp.patch_make("y", "y123");
-        // results = dmp.patch_apply(patches, "x");
-        // boolArray = results.second;
-        // resultStr = results.first + "\t" + (boolArray[0] ? "true" : "false");
-        // assertEquals("patch_apply: Edge partial match.", "x123\ttrue", resultStr);
+        // Edge partial match
+        let patches = dmp.patch_make(PatchInput::Texts("y", "y123"));
+        assert_eq!(
+            (b"x123".to_vec(), vec![true]),
+            dmp.patch_apply_internal(&patches, b"x")
+        );
     }
-    
+
     #[test]
     fn test_match_alphabet() {
         // Initialise the bitmasks for Bitap.
         // Unique.
-        assert_eq!(HashMap::from([(b'a', 4), (b'b', 2), (b'c', 1)]), DiffMatchPatch::match_alphabet(b"abc"));
+        assert_eq!(
+            HashMap::from([(b'a', 4), (b'b', 2), (b'c', 1)]),
+            DiffMatchPatch::match_alphabet(b"abc")
+        );
 
         // Duplicates.
-        assert_eq!(HashMap::from([(b'a', 37), (b'b', 18), (b'c', 8)]), DiffMatchPatch::match_alphabet(b"abcaba"))
+        assert_eq!(
+            HashMap::from([(b'a', 37), (b'b', 18), (b'c', 8)]),
+            DiffMatchPatch::match_alphabet(b"abcaba")
+        )
     }
 
     #[test]
     fn test_match_bitap() {
         // Bitap algorithm.
-        let mut dmp = DiffMatchPatch { match_distance: 100, ..Default::default() };
+        let mut dmp = DiffMatchPatch {
+            match_distance: 100,
+            ..Default::default()
+        };
 
         // Exact matches.
         assert_eq!(Some(5), dmp.match_bitap(b"abcdefghijk", b"fgh", 5));
@@ -3698,11 +3736,20 @@ mod tests {
 
         // Distance test.
         dmp.match_distance = 10;
-        assert_eq!(None, dmp.match_bitap(b"abcdefghijklmnopqrstuvwxyz", b"abcdefg", 24));
-        assert_eq!(Some(0), dmp.match_bitap(b"abcdefghijklmnopqrstuvwxyz", b"abcdxxefg", 1));
+        assert_eq!(
+            None,
+            dmp.match_bitap(b"abcdefghijklmnopqrstuvwxyz", b"abcdefg", 24)
+        );
+        assert_eq!(
+            Some(0),
+            dmp.match_bitap(b"abcdefghijklmnopqrstuvwxyz", b"abcdxxefg", 1)
+        );
 
         dmp.match_distance = 1000;
-        assert_eq!(Some(0), dmp.match_bitap(b"abcdefghijklmnopqrstuvwxyz", b"abcdefg", 24));
+        assert_eq!(
+            Some(0),
+            dmp.match_bitap(b"abcdefghijklmnopqrstuvwxyz", b"abcdefg", 24)
+        );
     }
 
     #[test]
@@ -3722,7 +3769,14 @@ mod tests {
         assert_eq!(Some(0), dmp.match_internal(b"abcdef", b"abcdefy", 0));
 
         // Complex match.
-        assert_eq!(Some(4), dmp.match_internal(b"I am the very model of a modern major general.", b" that berry ", 5));
+        assert_eq!(
+            Some(4),
+            dmp.match_internal(
+                b"I am the very model of a modern major general.",
+                b" that berry ",
+                5
+            )
+        );
 
         // Test null inputs.
         // try {
