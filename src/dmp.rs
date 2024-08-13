@@ -5,7 +5,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use percent_encoding::percent_decode;
+use percent_encoding::{percent_decode, percent_encode, CONTROLS};
 use serde::{Deserialize, Serialize};
 use serde_repr::{Deserialize_repr, Serialize_repr};
 
@@ -1668,8 +1668,9 @@ impl Display for Patch {
                 Ops::Equal => ' ',
             };
 
-            segments
-                .push(String::from_utf8([&[sign as u8], &diff.1[..], &[b'\n']].concat()).unwrap())
+            let segment = format!("{sign}{}\n", percent_encode(&diff.1, CONTROLS));
+
+            segments.push(segment)
         });
 
         write!(f, "{}", segments.join(""))
@@ -2294,14 +2295,13 @@ mod tests {
 
     use crate::dmp::{Diff, HalfMatch, LineToChars};
 
-    use super::{DiffMatchPatch, Ops, PatchInput};
+    use super::{DiffMatchPatch, Ops, Patch, PatchInput};
 
     // const tests = [
     //     'testDiffIsDestructurable', // TODO
     //     'testDiffCleanupEfficiency',
     //     'testDiffPrettyHtml',
     //     'testDiffDelta',
-    //     'testPatchObj',
     // ];
 
     #[test]
@@ -3273,6 +3273,37 @@ mod tests {
     }
 
     #[test]
+    fn test_patch_obj() {
+        let p = Patch {
+            start1: 20,
+            start2: 21,
+            length1: 18,
+            length2: 17,
+            diffs: vec![
+                Diff::equal(b"jump"),
+                Diff::delete(b"s"),
+                Diff::insert(b"ed"),
+                Diff::equal(b" over "),
+                Diff::delete(b"the"),
+                Diff::insert(b"a"),
+                Diff::equal(b"\nlaz"),
+            ],
+        };
+        assert_eq!(
+            "@@ -21,18 +22,17 @@\n jump\n-s\n+ed\n  over \n-the\n+a\n %0Alaz\n",
+            p.to_string()
+        );
+        // var p = new diff_match_patch.patch_obj();
+        // p.start1 = 20;
+        // p.start2 = 21;
+        // p.length1 = 18;
+        // p.length2 = 17;
+        // p.diffs = [[DIFF_EQUAL, 'jump'], [DIFF_DELETE, 's'], [DIFF_INSERT, 'ed'], [DIFF_EQUAL, ' over '], [DIFF_DELETE, 'the'], [DIFF_INSERT, 'a'], [DIFF_EQUAL, '\']];
+        // var strp = p.toString();
+        // assertEquals('', strp);
+    }
+
+    #[test]
     fn test_patch_add_context() {
         let dmp = DiffMatchPatch::default();
 
@@ -3317,7 +3348,7 @@ mod tests {
         assert!(DiffMatchPatch::patch_from_text("").is_empty());
 
         assert_eq!(
-            "@@ -21,18 +22,17 @@\n jump\n-s\n+ed\n  over \n-the\n+a\n \nlaz\n",
+            "@@ -21,18 +22,17 @@\n jump\n-s\n+ed\n  over \n-the\n+a\n %0Alaz\n",
             DiffMatchPatch::patch_from_text(
                 "@@ -21,18 +22,17 @@\n jump\n-s\n+ed\n  over \n-the\n+a\n %0Alaz\n"
             )[0]
@@ -3474,11 +3505,7 @@ mod tests {
         );
         dmp.patch_add_padding(&mut patches);
         assert_eq!(
-            percent_encoding::percent_decode(
-                b"@@ -1,8 +1,12 @@\n %01%02%03%04\n+test\n %01%02%03%04\n"
-            )
-            .decode_utf8()
-            .unwrap(),
+            "@@ -1,8 +1,12 @@\n %01%02%03%04\n+test\n %01%02%03%04\n",
             DiffMatchPatch::patch_to_text(&patches)
         );
 
@@ -3490,11 +3517,7 @@ mod tests {
         );
         dmp.patch_add_padding(&mut patches);
         assert_eq!(
-            percent_encoding::percent_decode(
-                b"@@ -2,8 +2,12 @@\n %02%03%04X\n+test\n Y%01%02%03\n"
-            )
-            .decode_utf8()
-            .unwrap(),
+            "@@ -2,8 +2,12 @@\n %02%03%04X\n+test\n Y%01%02%03\n",
             DiffMatchPatch::patch_to_text(&patches)
         );
 
@@ -3777,7 +3800,6 @@ mod tests {
                 5
             )
         );
-
         // Test null inputs.
         // try {
         //     dmp.match_main(null, null, 0);
