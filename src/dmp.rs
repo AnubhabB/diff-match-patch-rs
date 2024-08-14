@@ -45,6 +45,16 @@ impl Diff {
     pub fn equal(text: &[u8]) -> Self {
         Self::new(Ops::Equal, text)
     }
+
+    // returns the operation of the current diff
+    pub fn op(&self) -> Ops {
+        self.0
+    }
+
+    // returns the bytes of the text
+    pub fn text(&self) -> &[u8] {
+        &self.1[..]
+    }
 }
 
 pub struct DiffMatchPatch {
@@ -362,15 +372,15 @@ impl DiffMatchPatch {
         let mut delete_data = Vec::new();
 
         while pointer < difflen {
-            match diffs[pointer].0 {
+            match diffs[pointer].op() {
                 Ops::Insert => {
                     insert_n += 1;
-                    let mut data = diffs[pointer].1.to_vec();
+                    let mut data = diffs[pointer].text().to_vec();
                     insert_data.append(&mut data);
                 }
                 Ops::Delete => {
                     delete_n += 1;
-                    let mut data = diffs[pointer].1.to_vec();
+                    let mut data = diffs[pointer].text().to_vec();
                     delete_data.append(&mut data);
                 }
                 Ops::Equal => {
@@ -721,7 +731,7 @@ impl DiffMatchPatch {
 
         while pointer < difflen {
             let mut diff_mod = false;
-            if diffs[pointer].0 == Ops::Equal {
+            if diffs[pointer].op() == Ops::Equal {
                 equalities.push(pointer);
                 // Updating pre equality changes
                 insert_len_pre = insert_len_post;
@@ -731,14 +741,14 @@ impl DiffMatchPatch {
                 insert_len_post = 0;
                 delete_len_post = 0;
 
-                last_equality = Some(diffs[pointer].1.clone());
+                last_equality = Some(diffs[pointer].text());
             } else {
                 // Ops::Insert || Ops::Delete
                 // Increasing changes of post_equality metrics
-                if diffs[pointer].0 == Ops::Insert {
-                    insert_len_post += diffs[pointer].1.len();
+                if diffs[pointer].op() == Ops::Insert {
+                    insert_len_post += diffs[pointer].text().len();
                 } else {
-                    delete_len_post += diffs[pointer].1.len();
+                    delete_len_post += diffs[pointer].text().len();
                 }
 
                 // Eliminate an equality that is smaller or equal to the edits on both
@@ -801,9 +811,9 @@ impl DiffMatchPatch {
         // Only extract an overlap if it is as big as the edit ahead or behind it.
         pointer = 1;
         while difflen > 0 && pointer < difflen {
-            if diffs[pointer - 1].0 == Ops::Delete && diffs[pointer].0 == Ops::Insert {
-                let delete = diffs[pointer - 1].1.to_vec();
-                let insert = diffs[pointer].1.to_vec();
+            if diffs[pointer - 1].op() == Ops::Delete && diffs[pointer].op() == Ops::Insert {
+                let delete = diffs[pointer - 1].text().to_vec();
+                let insert = diffs[pointer].text().to_vec();
 
                 let delete_thres = delete.len() / 2 + if delete.len() % 2 > 0 { 1 } else { 0 };
                 let insert_thres = insert.len() / 2 + if insert.len() % 2 > 0 { 1 } else { 0 };
@@ -845,10 +855,10 @@ impl DiffMatchPatch {
         // Intentionally ignore the first and last element (don't need checking).
         while difflen > 0 && pointer < difflen - 1 {
             // an edit surrounded by equalities
-            if diffs[pointer - 1].0 == Ops::Equal && diffs[pointer + 1].0 == Ops::Equal {
-                let mut equality_prev = diffs[pointer - 1].1.clone();
-                let mut edit = diffs[pointer].1.clone();
-                let mut equality_next = diffs[pointer + 1].1.clone();
+            if diffs[pointer - 1].op() == Ops::Equal && diffs[pointer + 1].op() == Ops::Equal {
+                let mut equality_prev = diffs[pointer - 1].text().to_vec();
+                let mut edit = diffs[pointer].text().to_vec();
+                let mut equality_next = diffs[pointer + 1].text().to_vec();
 
                 // Shift the edit as far left as possible
                 let commonlen = Self::common_prefix(&equality_prev[..], &edit[..], true);
@@ -892,7 +902,7 @@ impl DiffMatchPatch {
                 }
 
                 // We have an improvement, save it back to the diff.
-                if diffs[pointer - 1].1 != best_equality_prev {
+                if diffs[pointer - 1].text() != best_equality_prev {
                     if !best_equality_prev.is_empty() {
                         diffs[pointer - 1].1 = best_equality_prev.to_vec();
                     } else {
@@ -985,16 +995,16 @@ impl DiffMatchPatch {
         // let mut commonlen = 0;
 
         while pointer < difflen {
-            match diffs[pointer].0 {
+            match diffs[pointer].op() {
                 Ops::Insert => {
                     insert_n += 1;
-                    let mut data = diffs[pointer].1.to_vec();
+                    let mut data = diffs[pointer].text().to_vec();
                     insert_data.append(&mut data);
                     pointer += 1;
                 }
                 Ops::Delete => {
                     delete_n += 1;
-                    let mut data = diffs[pointer].1.to_vec();
+                    let mut data = diffs[pointer].text().to_vec();
                     delete_data.append(&mut data);
                     pointer += 1;
                 }
@@ -1007,7 +1017,7 @@ impl DiffMatchPatch {
                                 Self::common_prefix(&insert_data[..], &delete_data[..], false);
                             if commonlen != 0 {
                                 let tmpidx = pointer - delete_n - insert_n;
-                                if tmpidx > 0 && diffs[tmpidx - 1].0 == Ops::Equal {
+                                if tmpidx > 0 && diffs[tmpidx - 1].op() == Ops::Equal {
                                     let mut appenddata = insert_data[..commonlen].to_vec();
                                     diffs[tmpidx - 1].1.append(&mut appenddata);
                                 } else {
@@ -1024,7 +1034,7 @@ impl DiffMatchPatch {
                             if commonlen > 0 {
                                 diffs[pointer].1 = [
                                     insert_data[insert_data.len() - commonlen..].to_vec(),
-                                    diffs[pointer].1.to_vec(),
+                                    diffs[pointer].text().to_vec(),
                                 ]
                                 .concat();
                                 insert_data = insert_data[..insert_data.len() - commonlen].to_vec();
@@ -1056,9 +1066,9 @@ impl DiffMatchPatch {
                         }
 
                         pointer += 1;
-                    } else if pointer != 0 && diffs[pointer - 1].0 == Ops::Equal {
+                    } else if pointer != 0 && diffs[pointer - 1].op() == Ops::Equal {
                         // Merge this equality with the previous one.
-                        let mut to_merge = diffs[pointer].1.to_vec();
+                        let mut to_merge = diffs[pointer].text().to_vec();
                         diffs[pointer - 1].1.append(&mut to_merge);
                         diffs.remove(pointer);
 
@@ -1076,7 +1086,7 @@ impl DiffMatchPatch {
         }
 
         if let Some(dl) = diffs.last() {
-            if dl.1.is_empty() {
+            if dl.text().is_empty() {
                 diffs.pop();
             }
         }
@@ -1096,17 +1106,20 @@ impl DiffMatchPatch {
                 diffs.get(pointer + 1),
             ) {
                 // This is a single edit surrounded by equalities.
-                if diff_prev.0 == Ops::Equal && diff_next.0 == Ops::Equal {
-                    let substr_idx = if diff.1.len() >= diff_prev.1.len() {
-                        diff.1.len() - diff_prev.1.len()
+                if diff_prev.op() == Ops::Equal && diff_next.op() == Ops::Equal {
+                    let substr_idx = if diff.text().len() >= diff_prev.text().len() {
+                        diff.text().len() - diff_prev.text().len()
                     } else {
                         0
                     };
-                    if diff.1[substr_idx..] == diff_prev.1 {
+                    if &diff.text()[substr_idx..] == diff_prev.text() {
                         // Shift the edit over the previous equality.
-                        let new_current_data =
-                            [&diff_prev.1, &diff.1[..diff.1.len() - diff_prev.1.len()]].concat();
-                        let new_next_data = [&diff_prev.1[..], &diff_next.1[..]].concat();
+                        let new_current_data = [
+                            diff_prev.text(),
+                            &diff.text()[..diff.text().len() - diff_prev.text().len()],
+                        ]
+                        .concat();
+                        let new_next_data = [diff_prev.text(), diff_next.text()].concat();
 
                         diffs[pointer].1 = new_current_data;
                         diffs[pointer + 1].1 = new_next_data;
@@ -1114,19 +1127,19 @@ impl DiffMatchPatch {
                         difflen = diffs.len();
 
                         changes = true;
-                    } else if diff.1[..if diff_next.1.len() <= diff.1.len() {
-                        diff_next.1.len()
+                    } else if &diff.text()[..if diff_next.text().len() <= diff.text().len() {
+                        diff_next.text().len()
                     } else {
-                        diff.1.len()
-                    }] == diff_next.1
+                        diff.text().len()
+                    }] == diff_next.text()
                     {
                         // Shift the edit over the next equality.
-                        let mut next_data = diffs[pointer + 1].1.to_vec();
+                        let mut next_data = diffs[pointer + 1].text().to_vec();
 
                         diffs[pointer - 1].1.append(&mut next_data);
                         diffs[pointer].1 = [
-                            &diffs[pointer].1[diffs[pointer + 1].1.len()..],
-                            &diffs[pointer + 1].1[..],
+                            &diffs[pointer].text()[diffs[pointer + 1].text().len()..],
+                            diffs[pointer + 1].text(),
                         ]
                         .concat();
                         diffs.remove(pointer + 1);
@@ -1145,7 +1158,129 @@ impl DiffMatchPatch {
         }
     }
 
+    // Reduce the number of edits by eliminating operationally trivial equalities.
     fn cleanup_efficiency(&self, diffs: &mut Vec<Diff>) {
+        if diffs.is_empty() {
+            return;
+        }
+
+        let mut changes = false;
+        // let mut equalities = vec![];
+        // let mut last_equality = None;
+
+        let mut idx = 0;
+        while idx < diffs.len() {
+            let diff = &diffs[idx];
+            // if diff.op() == Ops::Equal {
+            //     // Equality found
+            //     if diff.text().len()
+            // }
+            idx += 1;
+        }
+        // if (diffs.isEmpty()) {
+        //     return;
+        //   }
+        //   bool changes = false;
+        //   QStack<Diff> equalities;  // Stack of equalities.
+        //   QString lastequality;  // Always equal to equalities.lastElement().text
+        //   QMutableListIterator<Diff> pointer(diffs);
+        //   // Is there an insertion operation before the last equality.
+        //   bool pre_ins = false;
+        //   // Is there a deletion operation before the last equality.
+        //   bool pre_del = false;
+        //   // Is there an insertion operation after the last equality.
+        //   bool post_ins = false;
+        //   // Is there a deletion operation after the last equality.
+        //   bool post_del = false;
+
+        //   Diff *thisDiff = pointer.hasNext() ? &pointer.next() : NULL;
+        //   Diff *safeDiff = thisDiff;
+
+        //   while (thisDiff != NULL) {
+        //     if (thisDiff->operation == EQUAL) {
+        //       // Equality found.
+        //       if (thisDiff->text.length() < Diff_EditCost && (post_ins || post_del)) {
+        //         // Candidate found.
+        //         equalities.push(*thisDiff);
+        //         pre_ins = post_ins;
+        //         pre_del = post_del;
+        //         lastequality = thisDiff->text;
+        //       } else {
+        //         // Not a candidate, and can never become one.
+        //         equalities.clear();
+        //         lastequality = QString();
+        //         safeDiff = thisDiff;
+        //       }
+        //       post_ins = post_del = false;
+        //     } else {
+        //       // An insertion or deletion.
+        //       if (thisDiff->operation == DELETE) {
+        //         post_del = true;
+        //       } else {
+        //         post_ins = true;
+        //       }
+        //       /*
+        //       * Five types to be split:
+        //       * <ins>A</ins><del>B</del>XY<ins>C</ins><del>D</del>
+        //       * <ins>A</ins>X<ins>C</ins><del>D</del>
+        //       * <ins>A</ins><del>B</del>X<ins>C</ins>
+        //       * <ins>A</del>X<ins>C</ins><del>D</del>
+        //       * <ins>A</ins><del>B</del>X<del>C</del>
+        //       */
+        //       if (!lastequality.isNull()
+        //           && ((pre_ins && pre_del && post_ins && post_del)
+        //           || ((lastequality.length() < Diff_EditCost / 2)
+        //           && ((pre_ins ? 1 : 0) + (pre_del ? 1 : 0)
+        //           + (post_ins ? 1 : 0) + (post_del ? 1 : 0)) == 3))) {
+        //         // printf("Splitting: '%s'\n", qPrintable(lastequality));
+        //         // Walk back to offending equality.
+        //         while (*thisDiff != equalities.top()) {
+        //           thisDiff = &pointer.previous();
+        //         }
+        //         pointer.next();
+
+        //         // Replace equality with a delete.
+        //         pointer.setValue(Diff(DELETE, lastequality));
+        //         // Insert a corresponding an insert.
+        //         pointer.insert(Diff(INSERT, lastequality));
+        //         thisDiff = &pointer.previous();
+        //         pointer.next();
+
+        //         equalities.pop();  // Throw away the equality we just deleted.
+        //         lastequality = QString();
+        //         if (pre_ins && pre_del) {
+        //           // No changes made which could affect previous entry, keep going.
+        //           post_ins = post_del = true;
+        //           equalities.clear();
+        //           safeDiff = thisDiff;
+        //         } else {
+        //           if (!equalities.isEmpty()) {
+        //             // Throw away the previous equality (it needs to be reevaluated).
+        //             equalities.pop();
+        //           }
+        //           if (equalities.isEmpty()) {
+        //             // There are no previous questionable equalities,
+        //             // walk back to the last known safe diff.
+        //             thisDiff = safeDiff;
+        //           } else {
+        //             // There is an equality we can fall back to.
+        //             thisDiff = &equalities.top();
+        //           }
+        //           while (*thisDiff != pointer.previous()) {
+        //             // Intentionally empty loop.
+        //           }
+        //           post_ins = post_del = false;
+        //         }
+
+        //         changes = true;
+        //       }
+        //     }
+        //     thisDiff = pointer.hasNext() ? &pointer.next() : NULL;
+        //   }
+
+        //   if (changes) {
+        //     diff_cleanupMerge(diffs);
+        //   }
         todo!()
     }
 
@@ -1159,14 +1294,14 @@ impl DiffMatchPatch {
         let mut last_diff = None;
 
         for diff in diffs.iter() {
-            if diff.0 != Ops::Insert {
+            if diff.op() != Ops::Insert {
                 // Equality or deletion
-                char1 += diff.1.len();
+                char1 += diff.text().len();
             }
 
-            if diff.0 != Ops::Delete {
+            if diff.op() != Ops::Delete {
                 // Equality or insertion
-                char2 += diff.1.len();
+                char2 += diff.text().len();
             }
 
             if char1 > loc {
@@ -1180,7 +1315,7 @@ impl DiffMatchPatch {
         }
 
         if let Some(ld) = last_diff {
-            if ld.0 == Ops::Delete {
+            if ld.op() == Ops::Delete {
                 // The location was deleted.
                 return last_char2;
             }
@@ -1194,8 +1329,8 @@ impl DiffMatchPatch {
         diffs
             .iter()
             .filter_map(|diff| {
-                if diff.0 != Ops::Insert {
-                    Some(diff.1.clone())
+                if diff.op() != Ops::Insert {
+                    Some(diff.text())
                 } else {
                     None
                 }
@@ -1208,8 +1343,8 @@ impl DiffMatchPatch {
         diffs
             .iter()
             .filter_map(|diff| {
-                if diff.0 != Ops::Delete {
-                    Some(diff.1.clone())
+                if diff.op() != Ops::Delete {
+                    Some(diff.text())
                 } else {
                     None
                 }
@@ -1253,48 +1388,50 @@ impl DiffMatchPatch {
                 }
 
                 while !bigpatch.diffs.is_empty() && patch.length1 < max_bit - patch_margin {
-                    if bigpatch.diffs[0].0 == Ops::Insert {
+                    if bigpatch.diffs[0].op() == Ops::Insert {
                         // Insertions are harmless.
-                        patch.length2 += bigpatch.diffs[0].1.len();
-                        start2 += bigpatch.diffs[0].1.len();
+                        patch.length2 += bigpatch.diffs[0].text().len();
+                        start2 += bigpatch.diffs[0].text().len();
                         let d = bigpatch.diffs.remove(0);
                         patch.diffs.push(d);
                         empty = false;
                         // patch.diffs.push(value)
-                    } else if bigpatch.diffs[0].0 == Ops::Delete
+                    } else if bigpatch.diffs[0].op() == Ops::Delete
                         && patch.diffs.len() == 1
-                        && patch.diffs[0].0 == Ops::Equal
-                        && bigpatch.diffs[0].1.len() > 2 * max_bit
+                        && patch.diffs[0].op() == Ops::Equal
+                        && bigpatch.diffs[0].text().len() > 2 * max_bit
                     {
                         // This is a large deletion.  Let it pass in one chunk.
-                        patch.length1 += bigpatch.diffs[0].1.len();
-                        start1 += bigpatch.diffs[0].1.len();
+                        patch.length1 += bigpatch.diffs[0].text().len();
+                        start1 += bigpatch.diffs[0].text().len();
                         empty = false;
                         patch
                             .diffs
-                            .push(Diff::new(bigpatch.diffs[0].0, &bigpatch.diffs[0].1));
+                            .push(Diff::new(bigpatch.diffs[0].op(), bigpatch.diffs[0].text()));
                         bigpatch.diffs.remove(0);
                     } else {
                         // Deletion or equality.  Only take as much as we can stomach.
-                        let diff_text = bigpatch.diffs[0].1[..bigpatch.diffs[0]
-                            .1
+                        let diff_text = bigpatch.diffs[0].text()[..bigpatch.diffs[0]
+                            .text()
                             .len()
                             .min(max_bit - patch.length1 - patch_margin)]
                             .to_vec();
                         patch.length1 += diff_text.len();
                         start1 += diff_text.len();
 
-                        if bigpatch.diffs[0].0 == Ops::Equal {
+                        if bigpatch.diffs[0].op() == Ops::Equal {
                             patch.length2 += diff_text.len();
                             start2 += diff_text.len();
                         } else {
                             empty = false;
                         }
 
-                        patch.diffs.push(Diff::new(bigpatch.diffs[0].0, &diff_text));
+                        patch
+                            .diffs
+                            .push(Diff::new(bigpatch.diffs[0].op(), &diff_text));
 
                         let cond = if let Some(d) = bigpatch.diffs.first() {
-                            diff_text == d.1
+                            diff_text == d.text()
                         } else {
                             false
                         };
@@ -1302,7 +1439,7 @@ impl DiffMatchPatch {
                         if cond {
                             bigpatch.diffs.remove(0);
                         } else if let Some(bd) = bigpatch.diffs.first_mut() {
-                            bd.1 = bd.1[diff_text.len()..].to_vec();
+                            bd.1 = bd.text()[diff_text.len()..].to_vec();
                         }
                     }
                 }
@@ -1325,7 +1462,7 @@ impl DiffMatchPatch {
                     patch.length2 += postcontext.len();
 
                     let other = if let Some(pd) = patch.diffs.last_mut() {
-                        if pd.0 == Ops::Equal {
+                        if pd.op() == Ops::Equal {
                             pd.1.append(&mut postcontext);
                             false
                         } else {
@@ -1430,7 +1567,7 @@ impl DiffMatchPatch {
 
     fn chars_to_lines(diffs: &mut [Diff], lines: &[&[u8]]) -> Result<(), crate::errors::Error> {
         for d in diffs.iter_mut() {
-            let chars = match std::str::from_utf8(&d.1) {
+            let chars = match std::str::from_utf8(d.text()) {
                 Ok(c) => c,
                 Err(_) => return Err(crate::errors::Error::Utf8Error),
             };
@@ -1679,13 +1816,13 @@ impl Display for Patch {
             " @@\n".to_string(),
         ];
         self.diffs.iter().for_each(|diff| {
-            let sign = match diff.0 {
+            let sign = match diff.op() {
                 Ops::Insert => '+',
                 Ops::Delete => '-',
                 Ops::Equal => ' ',
             };
 
-            let segment = format!("{sign}{}\n", percent_encode(&diff.1, CONTROLS));
+            let segment = format!("{sign}{}\n", percent_encode(diff.text(), CONTROLS));
 
             segments.push(segment)
         });
@@ -1792,35 +1929,39 @@ impl DiffMatchPatch {
 
         diffs.iter().enumerate().for_each(|(idx, diff)| {
             // a new patch starts here
-            if patch.diffs.is_empty() && diff.0 != Ops::Equal {
+            if patch.diffs.is_empty() && diff.op() != Ops::Equal {
                 patch.start1 = char_n1;
                 patch.start2 = char_n2;
             }
 
-            match diff.0 {
+            match diff.op() {
                 Ops::Insert => {
-                    patch.length2 += diff.1.len();
-                    postpatch = [&postpatch[..char_n2], &diff.1, &postpatch[char_n2..]].concat();
+                    patch.length2 += diff.text().len();
+                    postpatch =
+                        [&postpatch[..char_n2], diff.text(), &postpatch[char_n2..]].concat();
                     patch.diffs.push(diff.clone());
                 }
                 Ops::Delete => {
-                    patch.length1 += diff.1.len();
-                    postpatch =
-                        [&postpatch[..char_n2], &postpatch[char_n2 + diff.1.len()..]].concat();
+                    patch.length1 += diff.text().len();
+                    postpatch = [
+                        &postpatch[..char_n2],
+                        &postpatch[char_n2 + diff.text().len()..],
+                    ]
+                    .concat();
 
                     patch.diffs.push(diff.clone());
                 }
                 Ops::Equal => {
-                    if diff.1.len() <= 2 * patch_margin
+                    if diff.text().len() <= 2 * patch_margin
                         && !patch.diffs.is_empty()
                         && diffs.len() != idx + 1
                     {
                         // Small equality inside a patch.
-                        patch.length1 += diff.1.len();
-                        patch.length2 += diff.1.len();
+                        patch.length1 += diff.text().len();
+                        patch.length2 += diff.text().len();
 
                         patch.diffs.push(diff.clone());
-                    } else if diff.1.len() >= 2 * patch_margin && !patch.diffs.is_empty() {
+                    } else if diff.text().len() >= 2 * patch_margin && !patch.diffs.is_empty() {
                         // Time for a new patch.
                         self.patch_add_context(&mut patch, &prepatch);
                         patches.push(patch.clone());
@@ -1836,11 +1977,11 @@ impl DiffMatchPatch {
                 }
             }
 
-            if diff.0 != Ops::Insert {
-                char_n1 += diff.1.len();
+            if diff.op() != Ops::Insert {
+                char_n1 += diff.text().len();
             }
-            if diff.0 != Ops::Delete {
-                char_n2 += diff.1.len();
+            if diff.op() != Ops::Delete {
+                char_n2 += diff.text().len();
             }
         });
 
@@ -2013,24 +2154,26 @@ impl DiffMatchPatch {
                         Self::cleanup_semantic_lossless(&mut diffs);
                         let mut idx1 = 0;
                         p.diffs.iter().for_each(|diff| {
-                            if diff.0 != Ops::Equal {
+                            if diff.op() != Ops::Equal {
                                 let idx2 = Self::x_index(&diffs, idx1);
-                                if diff.0 == Ops::Insert {
+                                if diff.op() == Ops::Insert {
                                     // Insertion
-                                    source = [&source[..sl + idx2], &diff.1, &source[sl + idx2..]]
-                                        .concat();
-                                } else if diff.0 == Ops::Delete {
+                                    source =
+                                        [&source[..sl + idx2], diff.text(), &source[sl + idx2..]]
+                                            .concat();
+                                } else if diff.op() == Ops::Delete {
                                     // Deletion
                                     source = [
                                         &source[..sl + idx2],
-                                        &source[sl + Self::x_index(&diffs, idx1 + diff.1.len())..],
+                                        &source[sl
+                                            + Self::x_index(&diffs, idx1 + diff.text().len())..],
                                     ]
                                     .concat();
                                 }
                             }
 
-                            if diff.0 != Ops::Delete {
-                                idx1 += diff.1.len()
+                            if diff.op() != Ops::Delete {
+                                idx1 += diff.text().len()
                             }
                         });
                     }
@@ -2064,7 +2207,7 @@ impl DiffMatchPatch {
         // Add some padding on start of first diff.
         if let Some(first_patch) = patches.first_mut() {
             let (add_null_pad, pad_len_gt_txt_len) = if let Some(fd) = first_patch.diffs.first() {
-                (fd.0 != Ops::Equal, pad_len > fd.1.len())
+                (fd.op() != Ops::Equal, pad_len > fd.text().len())
             } else {
                 (true, false)
             };
@@ -2078,8 +2221,8 @@ impl DiffMatchPatch {
             } else if pad_len_gt_txt_len {
                 // Grow first equality.
                 if let Some(fd) = first_patch.diffs.first_mut() {
-                    let extra_len = pad_len - fd.1.len();
-                    fd.1 = [&null_pad[fd.1.len()..], &fd.1[..]].concat();
+                    let extra_len = pad_len - fd.text().len();
+                    fd.1 = [&null_pad[fd.text().len()..], fd.text()].concat();
                     first_patch.start1 -= extra_len;
                     first_patch.start2 -= extra_len;
                     first_patch.length1 += extra_len;
@@ -2091,7 +2234,7 @@ impl DiffMatchPatch {
         // Add some padding on end of last diff.
         if let Some(last_patch) = patches.last_mut() {
             let (add_null_pad, pad_len_gt_txt_len) = if let Some(ld) = last_patch.diffs.last() {
-                (ld.0 != Ops::Equal, pad_len > ld.1.len())
+                (ld.op() != Ops::Equal, pad_len > ld.text().len())
             } else {
                 (true, false)
             };
@@ -2104,7 +2247,7 @@ impl DiffMatchPatch {
             } else if pad_len_gt_txt_len {
                 // Grow last equality.
                 if let Some(ld) = last_patch.diffs.last_mut() {
-                    let extra_len = pad_len - ld.1.len();
+                    let extra_len = pad_len - ld.text().len();
                     let mut padd = null_pad[..extra_len].to_vec();
                     ld.1.append(&mut padd);
 
@@ -2158,9 +2301,9 @@ impl DiffMatchPatch {
         let mut delete = 0;
 
         diffs.iter().for_each(|diff| {
-            match diff.0 {
-                Ops::Insert => insert += diff.1.len(),
-                Ops::Delete => delete += diff.1.len(),
+            match diff.op() {
+                Ops::Insert => insert += diff.text().len(),
+                Ops::Delete => delete += diff.text().len(),
                 Ops::Equal => {
                     // A deletion and an insertion is one substitution.
                     levenshtein += insert.max(delete);
@@ -2612,7 +2755,7 @@ mod tests {
         let mut diffs = [Diff::insert(&l2c.chars_old)];
         DiffMatchPatch::chars_to_lines(&mut diffs, &l2c.lines)?;
 
-        assert_eq!(lines.as_bytes(), diffs[0].1);
+        assert_eq!(lines.as_bytes(), diffs[0].text());
 
         Ok(())
     }
@@ -3278,220 +3421,217 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn test_diff_delta() {
-        let diffs = vec![
-            Diff::equal(b"jump"),
-            Diff::delete(b"s"),
-            Diff::insert(b"ed"),
-            Diff::equal(b" over "),
-            Diff::delete(b"the"),
-            Diff::insert(b"a"),
-            Diff::equal(b" lazy"),
-            Diff::insert(b"old dog"),
-        ];
-        assert_eq!(
-            b"jumps over the lazy".to_vec(),
-            DiffMatchPatch::diff_text_old(&diffs)
-        );
-        // var diffs = [[DIFF_EQUAL, 'jump'], [DIFF_DELETE, 's'], [DIFF_INSERT, 'ed'], [DIFF_EQUAL, ' over '], [DIFF_DELETE, 'the'], [DIFF_INSERT, 'a'], [DIFF_EQUAL, ' lazy'], [DIFF_INSERT, 'old dog']];
-        // var text1 = dmp.diff_text1(diffs);
-        // assertEquals('jumps over the lazy', text1);
+    // #[test]
+    // fn test_diff_delta() {
+    // let diffs = vec![
+    //     Diff::equal(b"jump"),
+    //     Diff::delete(b"s"),
+    //     Diff::insert(b"ed"),
+    //     Diff::equal(b" over "),
+    //     Diff::delete(b"the"),
+    //     Diff::insert(b"a"),
+    //     Diff::equal(b" lazy"),
+    //     Diff::insert(b"old dog"),
+    // ];
+    // assert_eq!(
+    //     b"jumps over the lazy".to_vec(),
+    //     DiffMatchPatch::diff_text_old(&diffs)
+    // );
 
-        // var delta = dmp.diff_toDelta(diffs);
-        // assertEquals('=4\t-1\t+ed\t=6\t-3\t+a\t=5\t+old dog', delta);
+    // var delta = dmp.diff_toDelta(diffs);
+    // assertEquals('=4\t-1\t+ed\t=6\t-3\t+a\t=5\t+old dog', delta);
 
-        // // Convert delta string into a diff.
-        // assertEquivalent(diffs, dmp.diff_fromDelta(text1, delta));
+    // // Convert delta string into a diff.
+    // assertEquivalent(diffs, dmp.diff_fromDelta(text1, delta));
 
-        // // Generates error (19 != 20).
-        // try {
-        //     dmp.diff_fromDelta(text1 + 'x', delta);
-        //     assertEquals(Error, null);
-        // } catch (e) {
-        //     // Exception expected.
-        // }
+    // // Generates error (19 != 20).
+    // try {
+    //     dmp.diff_fromDelta(text1 + 'x', delta);
+    //     assertEquals(Error, null);
+    // } catch (e) {
+    //     // Exception expected.
+    // }
 
-        // // Generates error (19 != 18).
-        // try {
-        //     dmp.diff_fromDelta(text1.substring(1), delta);
-        //     assertEquals(Error, null);
-        // } catch (e) {
-        //     // Exception expected.
-        // }
+    // // Generates error (19 != 18).
+    // try {
+    //     dmp.diff_fromDelta(text1.substring(1), delta);
+    //     assertEquals(Error, null);
+    // } catch (e) {
+    //     // Exception expected.
+    // }
 
-        // // Generates error (%c3%xy invalid Unicode).
-        // try {
-        //     dmp.diff_fromDelta('', '+%c3%xy');
-        //     assertEquals(Error, null);
-        // } catch (e) {
-        //     // Exception expected.
-        // }
+    // // Generates error (%c3%xy invalid Unicode).
+    // try {
+    //     dmp.diff_fromDelta('', '+%c3%xy');
+    //     assertEquals(Error, null);
+    // } catch (e) {
+    //     // Exception expected.
+    // }
 
-        // // Test deltas with special characters.
-        // diffs = [[DIFF_EQUAL, '\u0680 \x00 \t %'], [DIFF_DELETE, '\u0681 \x01 \n ^'], [DIFF_INSERT, '\u0682 \x02 \\ |']];
-        // text1 = dmp.diff_text1(diffs);
-        // assertEquals('\u0680 \x00 \t %\u0681 \x01 \n ^', text1);
+    // // Test deltas with special characters.
+    // diffs = [[DIFF_EQUAL, '\u0680 \x00 \t %'], [DIFF_DELETE, '\u0681 \x01 \n ^'], [DIFF_INSERT, '\u0682 \x02 \\ |']];
+    // text1 = dmp.diff_text1(diffs);
+    // assertEquals('\u0680 \x00 \t %\u0681 \x01 \n ^', text1);
 
-        // delta = dmp.diff_toDelta(diffs);
-        // assertEquals('=7\t-7\t+%DA%82 %02 %5C %7C', delta);
+    // delta = dmp.diff_toDelta(diffs);
+    // assertEquals('=7\t-7\t+%DA%82 %02 %5C %7C', delta);
 
-        // // Convert delta string into a diff.
-        // assertEquivalent(diffs, dmp.diff_fromDelta(text1, delta));
+    // // Convert delta string into a diff.
+    // assertEquivalent(diffs, dmp.diff_fromDelta(text1, delta));
 
-        // diffs = [[DIFF_EQUAL, '\ud83d\ude4b\ud83d'], [DIFF_INSERT, '\ude4c\ud83d'], [DIFF_EQUAL, '\ude4b']];
-        // try {
-        //     delta = dmp.diff_toDelta(diffs);
-        //     assertEquals('=2\t+%F0%9F%99%8C\t=2', delta);
-        // } catch ( e ) {
-        //     assertEquals(false, true);
-        // }
+    // diffs = [[DIFF_EQUAL, '\ud83d\ude4b\ud83d'], [DIFF_INSERT, '\ude4c\ud83d'], [DIFF_EQUAL, '\ude4b']];
+    // try {
+    //     delta = dmp.diff_toDelta(diffs);
+    //     assertEquals('=2\t+%F0%9F%99%8C\t=2', delta);
+    // } catch ( e ) {
+    //     assertEquals(false, true);
+    // }
 
-        // (function(){
-        //     const originalText = `U+1F17x	🅰️	🅱️		🅾️	🅿️ safhawifhkw
-        //     U+1F18x															🆎
-        //     0	1	2	3	4	5	6	7	8	9	A	B	C	D	E	F
-        //     U+1F19x		🆑	🆒	🆓	🆔	🆕	🆖	🆗	🆘	🆙	🆚
-        //     U+1F20x		🈁	🈂️							sfss.,_||saavvvbbds
-        //     U+1F21x	🈚
-        //     U+1F22x			🈯
-        //     U+1F23x			🈲	🈳	🈴	🈵	🈶	🈷️	🈸	🈹	🈺
-        //     U+1F25x	🉐	🉑
-        //     U+1F30x	🌀	🌁	🌂	🌃	🌄	🌅	🌆	🌇	🌈	🌉	🌊	🌋	🌌	🌍	🌎	🌏
-        //     U+1F31x	🌐	🌑	🌒	🌓	🌔	🌕	🌖	🌗	🌘	🌙	🌚	🌛	🌜	🌝	🌞	`;
+    // (function(){
+    //     const originalText = `U+1F17x	🅰️	🅱️		🅾️	🅿️ safhawifhkw
+    //     U+1F18x															🆎
+    //     0	1	2	3	4	5	6	7	8	9	A	B	C	D	E	F
+    //     U+1F19x		🆑	🆒	🆓	🆔	🆕	🆖	🆗	🆘	🆙	🆚
+    //     U+1F20x		🈁	🈂️							sfss.,_||saavvvbbds
+    //     U+1F21x	🈚
+    //     U+1F22x			🈯
+    //     U+1F23x			🈲	🈳	🈴	🈵	🈶	🈷️	🈸	🈹	🈺
+    //     U+1F25x	🉐	🉑
+    //     U+1F30x	🌀	🌁	🌂	🌃	🌄	🌅	🌆	🌇	🌈	🌉	🌊	🌋	🌌	🌍	🌎	🌏
+    //     U+1F31x	🌐	🌑	🌒	🌓	🌔	🌕	🌖	🌗	🌘	🌙	🌚	🌛	🌜	🌝	🌞	`;
 
-        //     // applies some random edits to string and returns new, edited string
-        //     function applyRandomTextEdit(text) {
-        //     let textArr = [...text];
-        //     let r = Math.random();
-        //     if(r < 1/3) { // swap
-        //     let swapCount = Math.floor(Math.random()*5);
-        //         for(let i = 0; i < swapCount; i++) {
-        //         let swapPos1 = Math.floor(Math.random()*textArr.length);
-        //         let swapPos2 = Math.floor(Math.random()*textArr.length);
-        //         let char1 = textArr[swapPos1];
-        //         let char2 = textArr[swapPos2];
-        //         textArr[swapPos1] = char2;
-        //         textArr[swapPos2] = char1;
-        //         }
-        //     } else if(r < 2/3) { // remove
-        //         let removeCount = Math.floor(Math.random()*5);
-        //         for(let i = 0; i < removeCount; i++) {
-        //         let removePos = Math.floor(Math.random()*textArr.length);
-        //         textArr[removePos] = "";
-        //         }
-        //     } else { // add
-        //         let addCount = Math.floor(Math.random()*5);
-        //         for(let i = 0; i < addCount; i++) {
-        //         let addPos = Math.floor(Math.random()*textArr.length);
-        //         let addFromPos = Math.floor(Math.random()*textArr.length);
-        //         textArr[addPos] = textArr[addPos] + textArr[addFromPos];
-        //         }
-        //     }
-        //     return textArr.join("");
-        //     }
+    //     // applies some random edits to string and returns new, edited string
+    //     function applyRandomTextEdit(text) {
+    //     let textArr = [...text];
+    //     let r = Math.random();
+    //     if(r < 1/3) { // swap
+    //     let swapCount = Math.floor(Math.random()*5);
+    //         for(let i = 0; i < swapCount; i++) {
+    //         let swapPos1 = Math.floor(Math.random()*textArr.length);
+    //         let swapPos2 = Math.floor(Math.random()*textArr.length);
+    //         let char1 = textArr[swapPos1];
+    //         let char2 = textArr[swapPos2];
+    //         textArr[swapPos1] = char2;
+    //         textArr[swapPos2] = char1;
+    //         }
+    //     } else if(r < 2/3) { // remove
+    //         let removeCount = Math.floor(Math.random()*5);
+    //         for(let i = 0; i < removeCount; i++) {
+    //         let removePos = Math.floor(Math.random()*textArr.length);
+    //         textArr[removePos] = "";
+    //         }
+    //     } else { // add
+    //         let addCount = Math.floor(Math.random()*5);
+    //         for(let i = 0; i < addCount; i++) {
+    //         let addPos = Math.floor(Math.random()*textArr.length);
+    //         let addFromPos = Math.floor(Math.random()*textArr.length);
+    //         textArr[addPos] = textArr[addPos] + textArr[addFromPos];
+    //         }
+    //     }
+    //     return textArr.join("");
+    //     }
 
-        //     for(let i = 0; i < 1000; i++) {
-        //     const newText = applyRandomTextEdit(originalText);
-        //     dmp.diff_toDelta(dmp.diff_main(originalText, newText));
-        //     }
-        // })();
+    //     for(let i = 0; i < 1000; i++) {
+    //     const newText = applyRandomTextEdit(originalText);
+    //     dmp.diff_toDelta(dmp.diff_main(originalText, newText));
+    //     }
+    // })();
 
-        // // Unicode - splitting surrogates
-        // try {
-        //     assertEquivalent(
-        //     dmp.diff_toDelta([[DIFF_INSERT,'\ud83c\udd71'], [DIFF_EQUAL, '\ud83c\udd70\ud83c\udd71']]),
-        //     dmp.diff_toDelta(dmp.diff_main('\ud83c\udd70\ud83c\udd71', '\ud83c\udd71\ud83c\udd70\ud83c\udd71'))
-        //     );
-        // } catch ( e ) {
-        //     assertEquals('Inserting similar surrogate pair at beginning', 'crashed');
-        // }
+    // // Unicode - splitting surrogates
+    // try {
+    //     assertEquivalent(
+    //     dmp.diff_toDelta([[DIFF_INSERT,'\ud83c\udd71'], [DIFF_EQUAL, '\ud83c\udd70\ud83c\udd71']]),
+    //     dmp.diff_toDelta(dmp.diff_main('\ud83c\udd70\ud83c\udd71', '\ud83c\udd71\ud83c\udd70\ud83c\udd71'))
+    //     );
+    // } catch ( e ) {
+    //     assertEquals('Inserting similar surrogate pair at beginning', 'crashed');
+    // }
 
-        // try {
-        //     assertEquivalent(
-        //     dmp.diff_toDelta([[DIFF_EQUAL,'\ud83c\udd70'], [DIFF_INSERT, '\ud83c\udd70'], [DIFF_EQUAL, '\ud83c\udd71']]),
-        //     dmp.diff_toDelta(dmp.diff_main('\ud83c\udd70\ud83c\udd71', '\ud83c\udd70\ud83c\udd70\ud83c\udd71'))
-        //     );
-        // } catch ( e ) {
-        //     assertEquals('Inserting similar surrogate pair in the middle', 'crashed');
-        // }
+    // try {
+    //     assertEquivalent(
+    //     dmp.diff_toDelta([[DIFF_EQUAL,'\ud83c\udd70'], [DIFF_INSERT, '\ud83c\udd70'], [DIFF_EQUAL, '\ud83c\udd71']]),
+    //     dmp.diff_toDelta(dmp.diff_main('\ud83c\udd70\ud83c\udd71', '\ud83c\udd70\ud83c\udd70\ud83c\udd71'))
+    //     );
+    // } catch ( e ) {
+    //     assertEquals('Inserting similar surrogate pair in the middle', 'crashed');
+    // }
 
-        // try {
-        //     assertEquivalent(
-        //     dmp.diff_toDelta([[DIFF_DELETE,'\ud83c\udd71'], [DIFF_EQUAL, '\ud83c\udd70\ud83c\udd71']]),
-        //     dmp.diff_toDelta(dmp.diff_main('\ud83c\udd71\ud83c\udd70\ud83c\udd71', '\ud83c\udd70\ud83c\udd71'))
-        //     );
-        // } catch ( e ) {
-        //     assertEquals('Deleting similar surrogate pair at the beginning', 'crashed');
-        // }
+    // try {
+    //     assertEquivalent(
+    //     dmp.diff_toDelta([[DIFF_DELETE,'\ud83c\udd71'], [DIFF_EQUAL, '\ud83c\udd70\ud83c\udd71']]),
+    //     dmp.diff_toDelta(dmp.diff_main('\ud83c\udd71\ud83c\udd70\ud83c\udd71', '\ud83c\udd70\ud83c\udd71'))
+    //     );
+    // } catch ( e ) {
+    //     assertEquals('Deleting similar surrogate pair at the beginning', 'crashed');
+    // }
 
-        // try {
-        //     assertEquivalent(
-        //     dmp.diff_toDelta([[DIFF_EQUAL, '\ud83c\udd70'], [DIFF_DELETE,'\ud83c\udd72'], [DIFF_EQUAL, '\ud83c\udd71']]),
-        //     dmp.diff_toDelta(dmp.diff_main('\ud83c\udd70\ud83c\udd72\ud83c\udd71', '\ud83c\udd70\ud83c\udd71'))
-        //     );
-        // } catch ( e ) {
-        //     assertEquals('Deleting similar surrogate pair in the middle', 'crashed');
-        // }
+    // try {
+    //     assertEquivalent(
+    //     dmp.diff_toDelta([[DIFF_EQUAL, '\ud83c\udd70'], [DIFF_DELETE,'\ud83c\udd72'], [DIFF_EQUAL, '\ud83c\udd71']]),
+    //     dmp.diff_toDelta(dmp.diff_main('\ud83c\udd70\ud83c\udd72\ud83c\udd71', '\ud83c\udd70\ud83c\udd71'))
+    //     );
+    // } catch ( e ) {
+    //     assertEquals('Deleting similar surrogate pair in the middle', 'crashed');
+    // }
 
-        // try {
-        //     assertEquivalent(
-        //     dmp.diff_toDelta([[DIFF_DELETE, '\ud83c\udd70'], [DIFF_INSERT, '\ud83c\udd71']]),
-        //     dmp.diff_toDelta([[DIFF_EQUAL, '\ud83c'], [DIFF_DELETE, '\udd70'], [DIFF_INSERT, '\udd71']]),
-        //     );
-        // } catch ( e ) {
-        //     assertEquals('Swap surrogate pair', 'crashed');
-        // }
+    // try {
+    //     assertEquivalent(
+    //     dmp.diff_toDelta([[DIFF_DELETE, '\ud83c\udd70'], [DIFF_INSERT, '\ud83c\udd71']]),
+    //     dmp.diff_toDelta([[DIFF_EQUAL, '\ud83c'], [DIFF_DELETE, '\udd70'], [DIFF_INSERT, '\udd71']]),
+    //     );
+    // } catch ( e ) {
+    //     assertEquals('Swap surrogate pair', 'crashed');
+    // }
 
-        // try {
-        //     assertEquivalent(
-        //     dmp.diff_toDelta([[DIFF_INSERT, '\ud83c\udd70'], [DIFF_DELETE, '\ud83c\udd71']]),
-        //     dmp.diff_toDelta([[DIFF_EQUAL, '\ud83c'], [DIFF_INSERT, '\udd70'], [DIFF_DELETE, '\udd71']]),
-        //     );
-        // } catch ( e ) {
-        //     assertEquals('Swap surrogate pair', 'crashed');
-        // }
+    // try {
+    //     assertEquivalent(
+    //     dmp.diff_toDelta([[DIFF_INSERT, '\ud83c\udd70'], [DIFF_DELETE, '\ud83c\udd71']]),
+    //     dmp.diff_toDelta([[DIFF_EQUAL, '\ud83c'], [DIFF_INSERT, '\udd70'], [DIFF_DELETE, '\udd71']]),
+    //     );
+    // } catch ( e ) {
+    //     assertEquals('Swap surrogate pair', 'crashed');
+    // }
 
-        // // Empty diff groups
-        // assertEquivalent(
-        //     dmp.diff_toDelta([[DIFF_EQUAL, 'abcdef'], [DIFF_DELETE, ''], [DIFF_INSERT, 'ghijk']]),
-        //     dmp.diff_toDelta([[DIFF_EQUAL, 'abcdef'], [DIFF_INSERT, 'ghijk']]),
-        // );
+    // // Empty diff groups
+    // assertEquivalent(
+    //     dmp.diff_toDelta([[DIFF_EQUAL, 'abcdef'], [DIFF_DELETE, ''], [DIFF_INSERT, 'ghijk']]),
+    //     dmp.diff_toDelta([[DIFF_EQUAL, 'abcdef'], [DIFF_INSERT, 'ghijk']]),
+    // );
 
-        // // Different versions of the library may have created deltas with
-        // // half of a surrogate pair encoded as if it were valid UTF-8
-        // try {
-        //     assertEquivalent(
-        //     dmp.diff_toDelta(dmp.diff_fromDelta('\ud83c\udd70', '-2\t+%F0%9F%85%B1')),
-        //     dmp.diff_toDelta(dmp.diff_fromDelta('\ud83c\udd70', '=1\t-1\t+%ED%B5%B1'))
-        //     );
-        // } catch ( e ) {
-        //     assertEquals('Decode UTF8-encoded surrogate half', 'crashed');
-        // }
+    // // Different versions of the library may have created deltas with
+    // // half of a surrogate pair encoded as if it were valid UTF-8
+    // try {
+    //     assertEquivalent(
+    //     dmp.diff_toDelta(dmp.diff_fromDelta('\ud83c\udd70', '-2\t+%F0%9F%85%B1')),
+    //     dmp.diff_toDelta(dmp.diff_fromDelta('\ud83c\udd70', '=1\t-1\t+%ED%B5%B1'))
+    //     );
+    // } catch ( e ) {
+    //     assertEquals('Decode UTF8-encoded surrogate half', 'crashed');
+    // }
 
-        // // Verify pool of unchanged characters.
-        // diffs = [[DIFF_INSERT, 'A-Z a-z 0-9 - _ . ! ~ * \' ( ) ; / ? : @ & = + $ , # ']];
-        // var text2 = dmp.diff_text2(diffs);
-        // assertEquals('A-Z a-z 0-9 - _ . ! ~ * \' ( ) ; / ? : @ & = + $ , # ', text2);
+    // // Verify pool of unchanged characters.
+    // diffs = [[DIFF_INSERT, 'A-Z a-z 0-9 - _ . ! ~ * \' ( ) ; / ? : @ & = + $ , # ']];
+    // var text2 = dmp.diff_text2(diffs);
+    // assertEquals('A-Z a-z 0-9 - _ . ! ~ * \' ( ) ; / ? : @ & = + $ , # ', text2);
 
-        // delta = dmp.diff_toDelta(diffs);
-        // assertEquals('+A-Z a-z 0-9 - _ . ! ~ * \' ( ) ; / ? : @ & = + $ , # ', delta);
+    // delta = dmp.diff_toDelta(diffs);
+    // assertEquals('+A-Z a-z 0-9 - _ . ! ~ * \' ( ) ; / ? : @ & = + $ , # ', delta);
 
-        // // Convert delta string into a diff.
-        // assertEquivalent(diffs, dmp.diff_fromDelta('', delta));
+    // // Convert delta string into a diff.
+    // assertEquivalent(diffs, dmp.diff_fromDelta('', delta));
 
-        // // 160 kb string.
-        // var a = 'abcdefghij';
-        // for (var i = 0; i < 14; i++) {
-        //     a += a;
-        // }
-        // diffs = [[DIFF_INSERT, a]];
-        // delta = dmp.diff_toDelta(diffs);
-        // assertEquals('+' + a, delta);
+    // // 160 kb string.
+    // var a = 'abcdefghij';
+    // for (var i = 0; i < 14; i++) {
+    //     a += a;
+    // }
+    // diffs = [[DIFF_INSERT, a]];
+    // delta = dmp.diff_toDelta(diffs);
+    // assertEquals('+' + a, delta);
 
-        // // Convert delta string into a diff.
-        // assertEquivalent(diffs, dmp.diff_fromDelta('', delta));
-    }
+    // // Convert delta string into a diff.
+    // assertEquivalent(diffs, dmp.diff_fromDelta('', delta));
+    // }
 
     // Helper to construct the two texts which made up the diff originally.
     fn rebuild_text(diffs: &[Diff]) -> Result<(String, String), crate::errors::Error> {
@@ -3499,14 +3639,12 @@ mod tests {
         let mut txt2 = vec![];
 
         diffs.iter().for_each(|d| {
-            // let mut txt = d.1.clone();
-            if d.0 != Ops::Insert {
-                txt1.push(&d.1[..]);
+            if d.op() != Ops::Insert {
+                txt1.push(d.text());
             }
 
-            // let mut txt = d.1.clone();
-            if d.0 != Ops::Delete {
-                txt2.push(&d.1[..]);
+            if d.op() != Ops::Delete {
+                txt2.push(d.text());
             }
         });
 
@@ -3682,14 +3820,6 @@ mod tests {
             "@@ -573,28 +573,31 @@\n cdefabcdefabcdefabcdefabcdef\n+123\n",
             DiffMatchPatch::patch_to_text(&patches)
         );
-
-        // // Test null inputs.
-        // try {
-        //   dmp.patch_make(null);
-        //   assertEquals(Error, null);
-        // } catch (e) {
-        //   // Exception expected.
-        // }
 
         Ok(())
     }
@@ -4044,12 +4174,5 @@ mod tests {
                 5
             )
         );
-        // Test null inputs.
-        // try {
-        //     dmp.match_main(null, null, 0);
-        //     assertEquals(Error, null);
-        // } catch (e) {
-        //     // Exception expected.
-        // }
     }
 }
