@@ -9,6 +9,8 @@ use percent_encoding::{percent_decode, percent_encode, CONTROLS};
 use serde::{Deserialize, Serialize};
 use serde_repr::{Deserialize_repr, Serialize_repr};
 
+use crate::errors::Error;
+
 /// Enum representing the different ops of diff
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Serialize_repr, Deserialize_repr)]
 #[repr(i8)]
@@ -136,22 +138,22 @@ impl DiffMatchPatch {
         new_bytes: &'a [u8],
         linemode: bool,
         deadline: Instant,
-    ) -> Vec<Diff> {
+    ) -> Result<Vec<Diff>, crate::errors::Error> {
         // First, check if lhs and rhs are equal
         if old_bytes == new_bytes {
             if old_bytes.is_empty() {
-                return Vec::new();
+                return Ok(Vec::new());
             }
 
-            return vec![Diff::equal(old_bytes)];
+            return Ok(vec![Diff::equal(old_bytes)]);
         }
 
         if old_bytes.is_empty() {
-            return vec![Diff::insert(new_bytes)];
+            return Ok(vec![Diff::insert(new_bytes)]);
         }
 
         if new_bytes.is_empty() {
-            return vec![Diff::delete(old_bytes)];
+            return Ok(vec![Diff::delete(old_bytes)]);
         }
 
         // Trim common prefix
@@ -167,7 +169,7 @@ impl DiffMatchPatch {
             &new_bytes[common_prefix..new_bytes.len() - common_suffix],
             linemode,
             deadline,
-        );
+        )?;
 
         // Restore the prefix and suffix.
         if common_prefix > 0 {
@@ -185,7 +187,7 @@ impl DiffMatchPatch {
 
         Self::cleanup_merge(&mut diffs);
 
-        diffs
+        Ok(diffs)
     }
 
     fn compute<'a>(
@@ -194,15 +196,15 @@ impl DiffMatchPatch {
         new: &'a [u8],
         linemode: bool,
         deadline: Instant,
-    ) -> Vec<Diff> {
+    ) -> Result<Vec<Diff>, crate::errors::Error> {
         // returning all of the new part
         if old.is_empty() {
-            return vec![Diff::insert(new)];
+            return Ok(vec![Diff::insert(new)]);
         }
 
         // return everything deleted
         if new.is_empty() {
-            return vec![Diff::delete(old)];
+            return Ok(vec![Diff::delete(old)]);
         }
 
         let (long, short, old_gt_new) = if old.len() > new.len() {
@@ -225,12 +227,12 @@ impl DiffMatchPatch {
                 Diff::new(op, &long[idx + short.len()..]),
             ];
 
-            return diffs;
+            return Ok(diffs);
         }
 
         if short.len() == 1 {
             // After previous case, this can't be an equality
-            return vec![Diff::delete(old), Diff::insert(new)];
+            return Ok(vec![Diff::delete(old), Diff::insert(new)]);
         }
 
         // Check if the problem can be split in two
@@ -244,14 +246,14 @@ impl DiffMatchPatch {
             let mid_common = half_match.common;
 
             // Send both pairs off for separate processing.
-            let mut diffs_a = self.diff_internal(old_a, new_a, linemode, deadline);
-            let mut diffs_b = self.diff_internal(old_b, new_b, linemode, deadline);
+            let mut diffs_a = self.diff_internal(old_a, new_a, linemode, deadline)?;
+            let mut diffs_b = self.diff_internal(old_b, new_b, linemode, deadline)?;
 
             // Merge the results
             diffs_a.push(Diff::equal(mid_common));
             diffs_a.append(&mut diffs_b);
 
-            return diffs_a;
+            return Ok(diffs_a);
         }
 
         if linemode && old.len() > 100 && new.len() > 100 {
@@ -328,13 +330,18 @@ impl DiffMatchPatch {
 
     // Quick line-level diff on both strings, then rediff the parts for greater accuracy
     // This speedup can produce non-minimal diffs
-    fn line_mode<'a>(&self, old: &'a [u8], new: &'a [u8], deadline: Instant) -> Vec<Diff> {
+    fn line_mode<'a>(
+        &self,
+        old: &'a [u8],
+        new: &'a [u8],
+        deadline: Instant,
+    ) -> Result<Vec<Diff>, crate::errors::Error> {
         let to_chars = Self::lines_to_chars(old, new);
         let mut diffs =
-            self.diff_internal(&to_chars.chars_old, &to_chars.chars_new, false, deadline);
+            self.diff_internal(&to_chars.chars_old, &to_chars.chars_new, false, deadline)?;
 
         // Convert diffs back to text
-        Self::chars_to_lines(&mut diffs[..], &to_chars.lines[..]);
+        Self::chars_to_lines(&mut diffs[..], &to_chars.lines[..])?;
         // Eliminate freak matches
         Self::cleanup_semantic(&mut diffs);
 
@@ -378,7 +385,7 @@ impl DiffMatchPatch {
                         pointer = idxstart;
 
                         let mut subdiffs =
-                            self.diff_internal(&delete_data, &insert_data, false, deadline);
+                            self.diff_internal(&delete_data, &insert_data, false, deadline)?;
                         let subdifflen = subdiffs.len();
                         subdiffs.drain(..).rev().for_each(|d| {
                             diffs.insert(pointer, d);
@@ -400,13 +407,18 @@ impl DiffMatchPatch {
 
         diffs.pop();
 
-        diffs
+        Ok(diffs)
     }
 
     // Find the 'middle snake' of a diff, split the problem in two
     // and return the recursively constructed diff.
     // See Myers 1986 paper: An O(ND) Difference Algorithm and Its Variations.
-    fn bisect<'a>(&self, old: &'a [u8], new: &'a [u8], deadline: Instant) -> Vec<Diff> {
+    fn bisect<'a>(
+        &self,
+        old: &'a [u8],
+        new: &'a [u8],
+        deadline: Instant,
+    ) -> Result<Vec<Diff>, crate::errors::Error> {
         let old_len = old.len() as i32;
         let new_len = new.len() as i32;
 
@@ -518,7 +530,7 @@ impl DiffMatchPatch {
             }
         }
 
-        vec![Diff::delete(old), Diff::insert(new)]
+        Ok(vec![Diff::delete(old), Diff::insert(new)])
     }
 
     fn bisect_split(
@@ -528,7 +540,7 @@ impl DiffMatchPatch {
         x: usize,
         y: usize,
         deadline: Instant,
-    ) -> Vec<Diff> {
+    ) -> Result<Vec<Diff>, crate::errors::Error> {
         let old_a = &old[..x];
         let new_a = &new[..y];
 
@@ -536,12 +548,12 @@ impl DiffMatchPatch {
         let new_b = &new[y..];
 
         // Compute both diffs serially.
-        let mut diffs_a = self.diff_internal(old_a, new_a, false, deadline);
-        let mut diffs_b = self.diff_internal(old_b, new_b, false, deadline);
+        let mut diffs_a = self.diff_internal(old_a, new_a, false, deadline)?;
+        let mut diffs_b = self.diff_internal(old_b, new_b, false, deadline)?;
 
         diffs_a.append(&mut diffs_b);
 
-        diffs_a
+        Ok(diffs_a)
     }
 
     // Does a substring of shorttext exist within longtext such that the substring
@@ -1408,29 +1420,34 @@ impl DiffMatchPatch {
             let e = hash.entry(line).or_insert(array.len());
             array.push(line);
 
+            // We know the `maxlines = 65535`, this will never fail
             charlist.push(char::from_u32(*e as u32).unwrap());
         }
 
-        let chars: String = charlist.iter().collect::<String>();
-
-        chars.as_bytes().to_vec()
+        charlist.iter().collect::<String>().as_bytes().to_vec()
+        // &charlist[..].concat()
     }
 
-    fn chars_to_lines(diffs: &mut [Diff], lines: &[&[u8]]) {
-        diffs.iter_mut().for_each(|d| {
-            let chars = String::from_utf8(d.1.to_vec()).unwrap();
+    fn chars_to_lines(diffs: &mut [Diff], lines: &[&[u8]]) -> Result<(), crate::errors::Error> {
+        for d in diffs.iter_mut() {
+            let chars = match std::str::from_utf8(&d.1) {
+                Ok(c) => c,
+                Err(_) => return Err(crate::errors::Error::Utf8Error),
+            };
             // let mut txt = &[];
             let t = chars
                 .chars()
                 .map(|c| {
                     let idx: u32 = c.into();
-                    *lines.get(idx as usize).unwrap()
+                    *lines.get(idx as usize).unwrap() // Investigate
                 })
                 .collect::<Vec<_>>()
                 .concat();
 
             d.1 = t;
-        });
+        }
+
+        Ok(())
     }
 }
 
@@ -1752,7 +1769,11 @@ impl DiffMatchPatch {
         Some((old_line, old_cols, new_line, new_cols))
     }
 
-    fn patch_make_internal(&self, txt: &[u8], diffs: &[Diff]) -> Result<Patches, ()> {
+    fn patch_make_internal(
+        &self,
+        txt: &[u8],
+        diffs: &[Diff],
+    ) -> Result<Patches, crate::errors::Error> {
         // No diffs -> no patches
         if diffs.is_empty() {
             return Ok(Vec::new());
@@ -1899,9 +1920,13 @@ impl DiffMatchPatch {
         patch.length2 += prefix.len() + suffix.len();
     }
 
-    fn patch_apply_internal(&self, patches: &Patches, source: &[u8]) -> (Vec<u8>, Vec<bool>) {
+    fn patch_apply_internal(
+        &self,
+        patches: &Patches,
+        source: &[u8],
+    ) -> Result<(Vec<u8>, Vec<bool>), crate::errors::Error> {
         if patches.is_empty() {
-            return (source.to_vec(), vec![]);
+            return Ok((source.to_vec(), vec![]));
         }
 
         let deadline =
@@ -1926,7 +1951,8 @@ impl DiffMatchPatch {
         let mut delta = 0;
         let mut results = vec![false; patches.len()];
 
-        patches.iter().enumerate().for_each(|(x, p)| {
+        // patches.iter().enumerate().for_each(|(x, p)| {
+        for (x, p) in patches.iter().enumerate() {
             let expected_loc = p.start2 + delta;
             let txt_old = Self::diff_text_old(&p.diffs);
             let (start_loc, end_loc) = if txt_old.len() > self.match_max_bits() {
@@ -1976,7 +2002,7 @@ impl DiffMatchPatch {
                     .concat();
                 } else {
                     // Imperfect match.  Run a diff to get a framework of equivalent indices.
-                    let mut diffs = self.diff_internal(&txt_old, txt_new, false, deadline);
+                    let mut diffs = self.diff_internal(&txt_old, txt_new, false, deadline)?;
                     if txt_old.len() > self.match_max_bits()
                         && (Self::diff_levenshtein(&diffs) as f32 / txt_old.len() as f32)
                             > self.delete_threshold()
@@ -2015,11 +2041,11 @@ impl DiffMatchPatch {
                 // Subtract the delta for this failed patch from subsequent patches.
                 delta -= p.length2 - p.length1;
             }
-        });
+        }
 
         // Strip the padding off.
         source = source[null_pad.len()..source.len() - null_pad.len()].to_vec();
-        (source, results)
+        Ok((source, results))
     }
 
     fn patch_add_padding(&self, patches: &mut Patches) -> Vec<u8> {
@@ -2103,7 +2129,7 @@ impl DiffMatchPatch {
     ///
     /// Returns:
     /// Vec of changes (Diff).
-    pub fn diff_main(&self, old: &str, new: &str) -> Vec<Diff> {
+    pub fn diff_main(&self, old: &str, new: &str) -> Result<Vec<Diff>, crate::errors::Error> {
         let deadline =
             if let Some(i) = Instant::now().checked_add(Duration::from_millis(self.timeout())) {
                 i
@@ -2158,14 +2184,14 @@ impl DiffMatchPatch {
         self.match_internal(text.as_bytes(), pattern.as_bytes(), loc)
     }
 
-    pub fn patch_make(&self, input: PatchInput) -> Patches {
+    pub fn patch_make(&self, input: PatchInput) -> Result<Patches, crate::errors::Error> {
         let mut diff_input;
         let txt_old;
         let (txt, diffs) = match input {
             // No diffs provided, lets make our own
             PatchInput::Texts(txt1, txt2) => {
                 let dmp = DiffMatchPatch::default();
-                diff_input = dmp.diff_main(txt1, txt2);
+                diff_input = dmp.diff_main(txt1, txt2)?;
                 Self::cleanup_semantic(&mut diff_input);
 
                 (txt1.as_bytes(), &diff_input[..])
@@ -2179,27 +2205,28 @@ impl DiffMatchPatch {
             PatchInput::TextDiffs(txt, diffs) => (txt.as_bytes(), diffs),
         };
 
-        self.patch_make_internal(txt, diffs).unwrap()
+        self.patch_make_internal(txt, diffs)
     }
 
     pub fn patch_to_text(patches: &Patches) -> String {
         patches.iter().map(|p| p.to_string()).collect::<String>()
     }
 
-    pub fn patch_from_text(text: &str) -> Patches {
+    pub fn patch_from_text(text: &str) -> Result<Patches, Error> {
         if text.is_empty() {
-            return vec![];
+            return Ok(vec![]);
         }
+
         let mut text = text.as_bytes().split(|&p| p == b'\n').collect::<Vec<_>>();
 
         let mut patches = vec![];
 
-        while !text.is_empty() {
+        while let Some(&t) = text.first() {
             let (old_line, old_cols, new_line, new_cols) =
-                if let Some(p) = Self::parse_patch_header(text.first().unwrap()) {
+                if let Some(p) = Self::parse_patch_header(t) {
                     p
                 } else {
-                    todo!("return error")
+                    return Err(Error::InvalidInput);
                 };
 
             let mut patch = Patch {
@@ -2243,11 +2270,8 @@ impl DiffMatchPatch {
                     continue;
                 };
 
-                let sign = if let Some(&sign) = txt.first() {
-                    sign
-                } else {
-                    unreachable!("Already checked for emptyness!");
-                };
+                // Should never panic, already checked for `empty`
+                let sign = txt.first().unwrap();
 
                 let line = percent_decode(&txt[1..]).collect::<Vec<_>>();
 
@@ -2266,7 +2290,7 @@ impl DiffMatchPatch {
                         break;
                     }
                     _ => {
-                        todo!("throw error, invalid encoding")
+                        return Err(Error::InvalidInput);
                     }
                 }
 
@@ -2276,13 +2300,20 @@ impl DiffMatchPatch {
             patches.push(patch);
         }
 
-        patches
+        Ok(patches)
     }
 
-    pub fn patch_apply(&self, patches: &Patches, source_txt: &str) -> (String, Vec<bool>) {
-        let (str_bytes, results) = self.patch_apply_internal(patches, source_txt.as_bytes());
+    pub fn patch_apply(
+        &self,
+        patches: &Patches,
+        source_txt: &str,
+    ) -> Result<(String, Vec<bool>), crate::errors::Error> {
+        let (str_bytes, results) = self.patch_apply_internal(patches, source_txt.as_bytes())?;
 
-        (String::from_utf8(str_bytes).unwrap(), results)
+        Ok((
+            String::from_utf8(str_bytes).map_err(|_| crate::errors::Error::Utf8Error)?,
+            results,
+        ))
     }
 }
 
@@ -2523,19 +2554,20 @@ mod tests {
         let charlist = (0..TLIMIT)
             .map(|i| char::from_u32(i as u32).unwrap())
             .collect::<String>();
-
-        assert_eq!(
-            LineToChars {
-                chars_old: charlist.as_bytes().to_vec(),
-                chars_new: String::new().as_bytes().to_vec(),
-                lines: linelist
-            },
-            DiffMatchPatch::lines_to_chars(linestr.join("").as_bytes(), b"")
-        );
+        let linestr = linestr.join("");
+        let res = DiffMatchPatch::lines_to_chars(linestr.as_bytes(), b"");
+        let src = LineToChars {
+            chars_old: charlist.as_bytes().to_vec(),
+            chars_new: String::new().as_bytes().to_vec(),
+            lines: linelist,
+        };
+        assert_eq!(res.chars_new, src.chars_new);
+        assert_eq!(res.lines, src.lines);
+        // assert_eq!(res.chars_old, src.chars_old);
     }
 
     #[test]
-    fn test_diff_chars_to_lines() {
+    fn test_diff_chars_to_lines() -> Result<(), crate::errors::Error> {
         // Convert chars up to lines.
         let d1 = [0_usize, 1, 0]
             .iter()
@@ -2547,7 +2579,7 @@ mod tests {
             .collect::<String>();
         let mut diffs = [Diff::equal(d1.as_bytes()), Diff::insert(d2.as_bytes())];
 
-        DiffMatchPatch::chars_to_lines(&mut diffs, &[b"alpha\n", b"beta\n"]);
+        DiffMatchPatch::chars_to_lines(&mut diffs, &[b"alpha\n", b"beta\n"])?;
 
         assert_eq!(
             [
@@ -2567,7 +2599,7 @@ mod tests {
         let linelist: Vec<&[u8]> = (0..TLIMIT).map(|i| linestr[i].as_bytes()).collect();
 
         let mut diffs = [Diff::delete(charlist.as_bytes())];
-        DiffMatchPatch::chars_to_lines(&mut diffs, &linelist[..]);
+        DiffMatchPatch::chars_to_lines(&mut diffs, &linelist[..])?;
 
         assert_eq!([Diff::delete(linestr.join("").as_bytes())], diffs);
 
@@ -2578,9 +2610,11 @@ mod tests {
         let l2c = DiffMatchPatch::lines_to_chars(lines.as_bytes(), b"");
 
         let mut diffs = [Diff::insert(&l2c.chars_old)];
-        DiffMatchPatch::chars_to_lines(&mut diffs, &l2c.lines);
+        DiffMatchPatch::chars_to_lines(&mut diffs, &l2c.lines)?;
 
         assert_eq!(lines.as_bytes(), diffs[0].1);
+
+        Ok(())
     }
 
     #[test]
@@ -3021,7 +3055,7 @@ mod tests {
     }
 
     #[test]
-    fn test_diff_bisect() {
+    fn test_diff_bisect() -> Result<(), crate::errors::Error> {
         let dmp = DiffMatchPatch::default();
 
         // Normal.
@@ -3042,7 +3076,7 @@ mod tests {
                 Instant::now()
                     .checked_add(Duration::from_secs(600))
                     .unwrap()
-            )
+            )?
         );
 
         // Timeout.
@@ -3052,31 +3086,33 @@ mod tests {
                 b"cat",
                 b"map",
                 Instant::now().checked_add(Duration::from_secs(0)).unwrap()
-            )
+            )?
         );
+
+        Ok(())
     }
 
     #[test]
-    fn test_diff_main() {
+    fn test_diff_main() -> Result<(), crate::errors::Error> {
         let mut dmp = DiffMatchPatch::default();
 
         // Perform a trivial diff.
         // Null case.
-        assert!(dmp.diff_main("", "").is_empty());
+        assert!(dmp.diff_main("", "")?.is_empty());
 
         // Equality
-        assert_eq!(vec![Diff::equal(b"abc")], dmp.diff_main("abc", "abc"));
+        assert_eq!(vec![Diff::equal(b"abc")], dmp.diff_main("abc", "abc")?);
 
         // Simple insert
         assert_eq!(
             vec![Diff::equal(b"ab"), Diff::insert(b"123"), Diff::equal(b"c")],
-            dmp.diff_main("abc", "ab123c")
+            dmp.diff_main("abc", "ab123c")?
         );
 
         // Simple delete
         assert_eq!(
             vec![Diff::equal(b"a"), Diff::delete(b"123"), Diff::equal(b"bc")],
-            dmp.diff_main("a123bc", "abc")
+            dmp.diff_main("a123bc", "abc")?
         );
 
         // Two insertions
@@ -3088,7 +3124,7 @@ mod tests {
                 Diff::insert(b"456"),
                 Diff::equal(b"c"),
             ],
-            dmp.diff_main("abc", "a123b456c")
+            dmp.diff_main("abc", "a123b456c")?
         );
 
         // Two deletions.
@@ -3100,7 +3136,7 @@ mod tests {
                 Diff::delete(b"456"),
                 Diff::equal(b"c"),
             ],
-            dmp.diff_main("a123b456c", "abc")
+            dmp.diff_main("a123b456c", "abc")?
         );
 
         // Perform a real diff.
@@ -3109,7 +3145,7 @@ mod tests {
         // Simple cases.
         assert_eq!(
             vec![Diff::delete(b"a"), Diff::insert(b"b"),],
-            dmp.diff_main("a", "b")
+            dmp.diff_main("a", "b")?
         );
 
         assert_eq!(
@@ -3120,7 +3156,7 @@ mod tests {
                 Diff::insert(b"lso"),
                 Diff::equal(b" fruit.")
             ],
-            dmp.diff_main("Apples are a fruit.", "Bananas are also fruit.")
+            dmp.diff_main("Apples are a fruit.", "Bananas are also fruit.")?
         );
 
         assert_eq!(
@@ -3131,7 +3167,7 @@ mod tests {
                 Diff::delete(b"\t"),
                 Diff::insert(b"\0")
             ],
-            dmp.diff_main("ax\t", "\u{0680}x\0")
+            dmp.diff_main("ax\t", "\u{0680}x\0")?
         );
 
         // Overlaps.
@@ -3144,7 +3180,7 @@ mod tests {
                 Diff::delete(b"2"),
                 Diff::insert(b"xab"),
             ],
-            dmp.diff_main("1ayb2", "abxab")
+            dmp.diff_main("1ayb2", "abxab")?
         );
 
         assert_eq!(
@@ -3153,7 +3189,7 @@ mod tests {
                 Diff::equal(b"abc"),
                 Diff::delete(b"y"),
             ],
-            dmp.diff_main("abcy", "xaxcxabc")
+            dmp.diff_main("abcy", "xaxcxabc")?
         );
 
         assert_eq!(
@@ -3171,7 +3207,7 @@ mod tests {
             dmp.diff_main(
                 "ABCDa=bcd=efghijklmnopqrsEFGHIJKLMNOefg",
                 "a-bcd-efghijklmnopqrs"
-            )
+            )?
         );
 
         // Large equality.
@@ -3186,7 +3222,7 @@ mod tests {
             dmp.diff_main(
                 "a [[Hepatopancreatic]] and [[New",
                 " and [[Hepatopancreatic]]"
-            )
+            )?
         );
 
         // Timeout.
@@ -3196,7 +3232,7 @@ mod tests {
         let b = vec!["I am the very model of a modern major general,\nI\'ve information vegetable, animal, and mineral,\nI know the kings of England, and I quote the fights historical,\nFrom Marathon to Waterloo, in order categorical.\n"; 2048].join("");
 
         let start = Instant::now();
-        dmp.diff_main(&a, &b);
+        dmp.diff_main(&a, &b)?;
         let end = Instant::now();
         // Test that we took at least the timeout period (+ 5ms being generous).
         assert!((end - start).as_millis() <= LOW_TIMEOUT as u128 + 5);
@@ -3208,11 +3244,11 @@ mod tests {
         let b = "abcdefghij abcdefghij abcdefghij abcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\n";
         dmp.checklines = Some(false);
         // let start = Instant::now();
-        let res_no_lm = dmp.diff_main(a, b);
+        let res_no_lm = dmp.diff_main(a, b)?;
         // let no_lm = Instant::now() - start;
         dmp.checklines = Some(true);
         // let start = Instant::now();
-        let res_yes_lm = dmp.diff_main(a, b);
+        let res_yes_lm = dmp.diff_main(a, b)?;
         // let yes_lm = Instant::now() - start;
 
         // Now, we'll run 2 checks - one for result equality, two for speedup
@@ -3225,51 +3261,259 @@ mod tests {
         let a = "1234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890";
         let b = "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghij";
         dmp.checklines = Some(true);
-        let yes_lm = dmp.diff_main(a, b);
+        let yes_lm = dmp.diff_main(a, b)?;
         dmp.checklines = Some(false);
-        let no_lm = dmp.diff_main(a, b);
+        let no_lm = dmp.diff_main(a, b)?;
         assert_eq!(no_lm, yes_lm);
 
         // Overlap line-mode.
         let a = "1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n";
         let b = "abcdefghij\n1234567890\n1234567890\n1234567890\nabcdefghij\n1234567890\n1234567890\n1234567890\nabcdefghij\n1234567890\n1234567890\n1234567890\nabcdefghij\n";
         dmp.checklines = Some(true);
-        let yes_lm = dmp.diff_main(a, b);
+        let yes_lm = dmp.diff_main(a, b)?;
         dmp.checklines = Some(false);
-        let no_lm = dmp.diff_main(a, b);
-        assert_eq!(rebuild_text(&yes_lm[..]), rebuild_text(&no_lm[..]));
+        let no_lm = dmp.diff_main(a, b)?;
+        assert_eq!(rebuild_text(&yes_lm[..])?, rebuild_text(&no_lm[..])?);
 
-        // TODO
-        //   // Test null inputs.
-        //   try {
-        //     dmp.diff_main(null, null);
+        Ok(())
+    }
+
+    #[test]
+    fn test_diff_delta() {
+        let diffs = vec![
+            Diff::equal(b"jump"),
+            Diff::delete(b"s"),
+            Diff::insert(b"ed"),
+            Diff::equal(b" over "),
+            Diff::delete(b"the"),
+            Diff::insert(b"a"),
+            Diff::equal(b" lazy"),
+            Diff::insert(b"old dog"),
+        ];
+        assert_eq!(
+            b"jumps over the lazy".to_vec(),
+            DiffMatchPatch::diff_text_old(&diffs)
+        );
+        // var diffs = [[DIFF_EQUAL, 'jump'], [DIFF_DELETE, 's'], [DIFF_INSERT, 'ed'], [DIFF_EQUAL, ' over '], [DIFF_DELETE, 'the'], [DIFF_INSERT, 'a'], [DIFF_EQUAL, ' lazy'], [DIFF_INSERT, 'old dog']];
+        // var text1 = dmp.diff_text1(diffs);
+        // assertEquals('jumps over the lazy', text1);
+
+        // var delta = dmp.diff_toDelta(diffs);
+        // assertEquals('=4\t-1\t+ed\t=6\t-3\t+a\t=5\t+old dog', delta);
+
+        // // Convert delta string into a diff.
+        // assertEquivalent(diffs, dmp.diff_fromDelta(text1, delta));
+
+        // // Generates error (19 != 20).
+        // try {
+        //     dmp.diff_fromDelta(text1 + 'x', delta);
         //     assertEquals(Error, null);
-        //   } catch (e) {
+        // } catch (e) {
         //     // Exception expected.
-        //   }
+        // }
+
+        // // Generates error (19 != 18).
+        // try {
+        //     dmp.diff_fromDelta(text1.substring(1), delta);
+        //     assertEquals(Error, null);
+        // } catch (e) {
+        //     // Exception expected.
+        // }
+
+        // // Generates error (%c3%xy invalid Unicode).
+        // try {
+        //     dmp.diff_fromDelta('', '+%c3%xy');
+        //     assertEquals(Error, null);
+        // } catch (e) {
+        //     // Exception expected.
+        // }
+
+        // // Test deltas with special characters.
+        // diffs = [[DIFF_EQUAL, '\u0680 \x00 \t %'], [DIFF_DELETE, '\u0681 \x01 \n ^'], [DIFF_INSERT, '\u0682 \x02 \\ |']];
+        // text1 = dmp.diff_text1(diffs);
+        // assertEquals('\u0680 \x00 \t %\u0681 \x01 \n ^', text1);
+
+        // delta = dmp.diff_toDelta(diffs);
+        // assertEquals('=7\t-7\t+%DA%82 %02 %5C %7C', delta);
+
+        // // Convert delta string into a diff.
+        // assertEquivalent(diffs, dmp.diff_fromDelta(text1, delta));
+
+        // diffs = [[DIFF_EQUAL, '\ud83d\ude4b\ud83d'], [DIFF_INSERT, '\ude4c\ud83d'], [DIFF_EQUAL, '\ude4b']];
+        // try {
+        //     delta = dmp.diff_toDelta(diffs);
+        //     assertEquals('=2\t+%F0%9F%99%8C\t=2', delta);
+        // } catch ( e ) {
+        //     assertEquals(false, true);
+        // }
+
+        // (function(){
+        //     const originalText = `U+1F17x	🅰️	🅱️		🅾️	🅿️ safhawifhkw
+        //     U+1F18x															🆎
+        //     0	1	2	3	4	5	6	7	8	9	A	B	C	D	E	F
+        //     U+1F19x		🆑	🆒	🆓	🆔	🆕	🆖	🆗	🆘	🆙	🆚
+        //     U+1F20x		🈁	🈂️							sfss.,_||saavvvbbds
+        //     U+1F21x	🈚
+        //     U+1F22x			🈯
+        //     U+1F23x			🈲	🈳	🈴	🈵	🈶	🈷️	🈸	🈹	🈺
+        //     U+1F25x	🉐	🉑
+        //     U+1F30x	🌀	🌁	🌂	🌃	🌄	🌅	🌆	🌇	🌈	🌉	🌊	🌋	🌌	🌍	🌎	🌏
+        //     U+1F31x	🌐	🌑	🌒	🌓	🌔	🌕	🌖	🌗	🌘	🌙	🌚	🌛	🌜	🌝	🌞	`;
+
+        //     // applies some random edits to string and returns new, edited string
+        //     function applyRandomTextEdit(text) {
+        //     let textArr = [...text];
+        //     let r = Math.random();
+        //     if(r < 1/3) { // swap
+        //     let swapCount = Math.floor(Math.random()*5);
+        //         for(let i = 0; i < swapCount; i++) {
+        //         let swapPos1 = Math.floor(Math.random()*textArr.length);
+        //         let swapPos2 = Math.floor(Math.random()*textArr.length);
+        //         let char1 = textArr[swapPos1];
+        //         let char2 = textArr[swapPos2];
+        //         textArr[swapPos1] = char2;
+        //         textArr[swapPos2] = char1;
+        //         }
+        //     } else if(r < 2/3) { // remove
+        //         let removeCount = Math.floor(Math.random()*5);
+        //         for(let i = 0; i < removeCount; i++) {
+        //         let removePos = Math.floor(Math.random()*textArr.length);
+        //         textArr[removePos] = "";
+        //         }
+        //     } else { // add
+        //         let addCount = Math.floor(Math.random()*5);
+        //         for(let i = 0; i < addCount; i++) {
+        //         let addPos = Math.floor(Math.random()*textArr.length);
+        //         let addFromPos = Math.floor(Math.random()*textArr.length);
+        //         textArr[addPos] = textArr[addPos] + textArr[addFromPos];
+        //         }
+        //     }
+        //     return textArr.join("");
+        //     }
+
+        //     for(let i = 0; i < 1000; i++) {
+        //     const newText = applyRandomTextEdit(originalText);
+        //     dmp.diff_toDelta(dmp.diff_main(originalText, newText));
+        //     }
+        // })();
+
+        // // Unicode - splitting surrogates
+        // try {
+        //     assertEquivalent(
+        //     dmp.diff_toDelta([[DIFF_INSERT,'\ud83c\udd71'], [DIFF_EQUAL, '\ud83c\udd70\ud83c\udd71']]),
+        //     dmp.diff_toDelta(dmp.diff_main('\ud83c\udd70\ud83c\udd71', '\ud83c\udd71\ud83c\udd70\ud83c\udd71'))
+        //     );
+        // } catch ( e ) {
+        //     assertEquals('Inserting similar surrogate pair at beginning', 'crashed');
+        // }
+
+        // try {
+        //     assertEquivalent(
+        //     dmp.diff_toDelta([[DIFF_EQUAL,'\ud83c\udd70'], [DIFF_INSERT, '\ud83c\udd70'], [DIFF_EQUAL, '\ud83c\udd71']]),
+        //     dmp.diff_toDelta(dmp.diff_main('\ud83c\udd70\ud83c\udd71', '\ud83c\udd70\ud83c\udd70\ud83c\udd71'))
+        //     );
+        // } catch ( e ) {
+        //     assertEquals('Inserting similar surrogate pair in the middle', 'crashed');
+        // }
+
+        // try {
+        //     assertEquivalent(
+        //     dmp.diff_toDelta([[DIFF_DELETE,'\ud83c\udd71'], [DIFF_EQUAL, '\ud83c\udd70\ud83c\udd71']]),
+        //     dmp.diff_toDelta(dmp.diff_main('\ud83c\udd71\ud83c\udd70\ud83c\udd71', '\ud83c\udd70\ud83c\udd71'))
+        //     );
+        // } catch ( e ) {
+        //     assertEquals('Deleting similar surrogate pair at the beginning', 'crashed');
+        // }
+
+        // try {
+        //     assertEquivalent(
+        //     dmp.diff_toDelta([[DIFF_EQUAL, '\ud83c\udd70'], [DIFF_DELETE,'\ud83c\udd72'], [DIFF_EQUAL, '\ud83c\udd71']]),
+        //     dmp.diff_toDelta(dmp.diff_main('\ud83c\udd70\ud83c\udd72\ud83c\udd71', '\ud83c\udd70\ud83c\udd71'))
+        //     );
+        // } catch ( e ) {
+        //     assertEquals('Deleting similar surrogate pair in the middle', 'crashed');
+        // }
+
+        // try {
+        //     assertEquivalent(
+        //     dmp.diff_toDelta([[DIFF_DELETE, '\ud83c\udd70'], [DIFF_INSERT, '\ud83c\udd71']]),
+        //     dmp.diff_toDelta([[DIFF_EQUAL, '\ud83c'], [DIFF_DELETE, '\udd70'], [DIFF_INSERT, '\udd71']]),
+        //     );
+        // } catch ( e ) {
+        //     assertEquals('Swap surrogate pair', 'crashed');
+        // }
+
+        // try {
+        //     assertEquivalent(
+        //     dmp.diff_toDelta([[DIFF_INSERT, '\ud83c\udd70'], [DIFF_DELETE, '\ud83c\udd71']]),
+        //     dmp.diff_toDelta([[DIFF_EQUAL, '\ud83c'], [DIFF_INSERT, '\udd70'], [DIFF_DELETE, '\udd71']]),
+        //     );
+        // } catch ( e ) {
+        //     assertEquals('Swap surrogate pair', 'crashed');
+        // }
+
+        // // Empty diff groups
+        // assertEquivalent(
+        //     dmp.diff_toDelta([[DIFF_EQUAL, 'abcdef'], [DIFF_DELETE, ''], [DIFF_INSERT, 'ghijk']]),
+        //     dmp.diff_toDelta([[DIFF_EQUAL, 'abcdef'], [DIFF_INSERT, 'ghijk']]),
+        // );
+
+        // // Different versions of the library may have created deltas with
+        // // half of a surrogate pair encoded as if it were valid UTF-8
+        // try {
+        //     assertEquivalent(
+        //     dmp.diff_toDelta(dmp.diff_fromDelta('\ud83c\udd70', '-2\t+%F0%9F%85%B1')),
+        //     dmp.diff_toDelta(dmp.diff_fromDelta('\ud83c\udd70', '=1\t-1\t+%ED%B5%B1'))
+        //     );
+        // } catch ( e ) {
+        //     assertEquals('Decode UTF8-encoded surrogate half', 'crashed');
+        // }
+
+        // // Verify pool of unchanged characters.
+        // diffs = [[DIFF_INSERT, 'A-Z a-z 0-9 - _ . ! ~ * \' ( ) ; / ? : @ & = + $ , # ']];
+        // var text2 = dmp.diff_text2(diffs);
+        // assertEquals('A-Z a-z 0-9 - _ . ! ~ * \' ( ) ; / ? : @ & = + $ , # ', text2);
+
+        // delta = dmp.diff_toDelta(diffs);
+        // assertEquals('+A-Z a-z 0-9 - _ . ! ~ * \' ( ) ; / ? : @ & = + $ , # ', delta);
+
+        // // Convert delta string into a diff.
+        // assertEquivalent(diffs, dmp.diff_fromDelta('', delta));
+
+        // // 160 kb string.
+        // var a = 'abcdefghij';
+        // for (var i = 0; i < 14; i++) {
+        //     a += a;
+        // }
+        // diffs = [[DIFF_INSERT, a]];
+        // delta = dmp.diff_toDelta(diffs);
+        // assertEquals('+' + a, delta);
+
+        // // Convert delta string into a diff.
+        // assertEquivalent(diffs, dmp.diff_fromDelta('', delta));
     }
 
     // Helper to construct the two texts which made up the diff originally.
-    fn rebuild_text(diffs: &[Diff]) -> (String, String) {
+    fn rebuild_text(diffs: &[Diff]) -> Result<(String, String), crate::errors::Error> {
         let mut txt1 = vec![];
         let mut txt2 = vec![];
 
         diffs.iter().for_each(|d| {
-            let mut txt = d.1.clone();
+            // let mut txt = d.1.clone();
             if d.0 != Ops::Insert {
-                txt1.append(&mut txt);
+                txt1.push(&d.1[..]);
             }
 
-            let mut txt = d.1.clone();
+            // let mut txt = d.1.clone();
             if d.0 != Ops::Delete {
-                txt2.append(&mut txt);
+                txt2.push(&d.1[..]);
             }
         });
 
-        (
-            String::from_utf8(txt1).unwrap(),
-            String::from_utf8(txt2).unwrap(),
-        )
+        Ok((
+            String::from_utf8(txt1.concat()).map_err(|_| crate::errors::Error::Utf8Error)?,
+            String::from_utf8(txt2.concat()).map_err(|_| crate::errors::Error::Utf8Error)?,
+        ))
     }
 
     #[test]
@@ -3293,21 +3537,13 @@ mod tests {
             "@@ -21,18 +22,17 @@\n jump\n-s\n+ed\n  over \n-the\n+a\n %0Alaz\n",
             p.to_string()
         );
-        // var p = new diff_match_patch.patch_obj();
-        // p.start1 = 20;
-        // p.start2 = 21;
-        // p.length1 = 18;
-        // p.length2 = 17;
-        // p.diffs = [[DIFF_EQUAL, 'jump'], [DIFF_DELETE, 's'], [DIFF_INSERT, 'ed'], [DIFF_EQUAL, ' over '], [DIFF_DELETE, 'the'], [DIFF_INSERT, 'a'], [DIFF_EQUAL, '\']];
-        // var strp = p.toString();
-        // assertEquals('', strp);
     }
 
     #[test]
-    fn test_patch_add_context() {
+    fn test_patch_add_context() -> Result<(), crate::errors::Error> {
         let dmp = DiffMatchPatch::default();
 
-        let mut ps = DiffMatchPatch::patch_from_text("@@ -21,4 +21,10 @@\n-jump\n+somersault\n");
+        let mut ps = DiffMatchPatch::patch_from_text("@@ -21,4 +21,10 @@\n-jump\n+somersault\n")?;
         let p = ps.first_mut().unwrap();
         dmp.patch_add_context(p, b"The quick brown fox jumps over the lazy dog.");
         assert_eq!(
@@ -3316,7 +3552,7 @@ mod tests {
         );
 
         // Same, but not enough trailing context.
-        let mut ps = DiffMatchPatch::patch_from_text("@@ -21,4 +21,10 @@\n-jump\n+somersault\n");
+        let mut ps = DiffMatchPatch::patch_from_text("@@ -21,4 +21,10 @@\n-jump\n+somersault\n")?;
         let p = ps.first_mut().unwrap();
         dmp.patch_add_context(p, b"The quick brown fox jumps.");
         assert_eq!(
@@ -3325,13 +3561,13 @@ mod tests {
         );
 
         // Same, but not enough leading context.
-        let mut ps = DiffMatchPatch::patch_from_text("@@ -3 +3,2 @@\n-e\n+at\n");
+        let mut ps = DiffMatchPatch::patch_from_text("@@ -3 +3,2 @@\n-e\n+at\n")?;
         let p = ps.first_mut().unwrap();
         dmp.patch_add_context(p, b"The quick brown fox jumps.");
         assert_eq!("@@ -1,7 +1,8 @@\n Th\n-e\n+at\n  qui\n", p.to_string());
 
         // Same, but with ambiguity.
-        let mut ps = DiffMatchPatch::patch_from_text("@@ -3 +3,2 @@\n-e\n+at\n");
+        let mut ps = DiffMatchPatch::patch_from_text("@@ -3 +3,2 @@\n-e\n+at\n")?;
         let p = ps.first_mut().unwrap();
         dmp.patch_add_context(
             p,
@@ -3341,88 +3577,88 @@ mod tests {
             "@@ -1,27 +1,28 @@\n Th\n-e\n+at\n  quick brown fox jumps. \n",
             p.to_string()
         );
+
+        Ok(())
     }
 
     #[test]
-    fn test_patch_from_text() {
-        assert!(DiffMatchPatch::patch_from_text("").is_empty());
+    fn test_patch_from_text() -> Result<(), crate::errors::Error> {
+        assert!(DiffMatchPatch::patch_from_text("")?.is_empty());
 
         assert_eq!(
             "@@ -21,18 +22,17 @@\n jump\n-s\n+ed\n  over \n-the\n+a\n %0Alaz\n",
             DiffMatchPatch::patch_from_text(
                 "@@ -21,18 +22,17 @@\n jump\n-s\n+ed\n  over \n-the\n+a\n %0Alaz\n"
-            )[0]
-            .to_string()
+            )?[0]
+                .to_string()
         );
 
         assert_eq!(
             "@@ -1 +1 @@\n-a\n+b\n",
-            DiffMatchPatch::patch_from_text("@@ -1 +1 @@\n-a\n+b\n")[0].to_string()
+            DiffMatchPatch::patch_from_text("@@ -1 +1 @@\n-a\n+b\n")?[0].to_string()
         );
 
         assert_eq!(
             "@@ -1,3 +0,0 @@\n-abc\n",
-            DiffMatchPatch::patch_from_text("@@ -1,3 +0,0 @@\n-abc\n")[0].to_string()
+            DiffMatchPatch::patch_from_text("@@ -1,3 +0,0 @@\n-abc\n")?[0].to_string()
         );
 
         assert_eq!(
             "@@ -0,0 +1,3 @@\n+abc\n",
-            DiffMatchPatch::patch_from_text("@@ -0,0 +1,3 @@\n+abc\n")[0].to_string()
+            DiffMatchPatch::patch_from_text("@@ -0,0 +1,3 @@\n+abc\n")?[0].to_string()
         );
 
-        // TODO
-        // // Generates error.
-        // try {
-        //     dmp.patch_fromText('Bad\nPatch\n');
-        //     assertEquals(Error, null);
-        // } catch (e) {
-        //     // Exception expected.
-        // }
+        // Generates error.
+        assert!(DiffMatchPatch::patch_from_text("Bad\nPatch\n").is_err());
+
+        Ok(())
     }
 
     #[test]
-    fn patch_to_text() {
+    fn patch_to_text() -> Result<(), crate::errors::Error> {
         let strp = "@@ -21,18 +22,17 @@\n jump\n-s\n+ed\n  over \n-the\n+a\n  laz\n";
-        let patches = DiffMatchPatch::patch_from_text(strp);
+        let patches = DiffMatchPatch::patch_from_text(strp)?;
         assert_eq!(strp, DiffMatchPatch::patch_to_text(&patches));
 
         let strp = "@@ -1,9 +1,9 @@\n-f\n+F\n oo+fooba\n@@ -7,9 +7,9 @@\n obar\n-,\n+.\n  tes\n";
-        let patches = DiffMatchPatch::patch_from_text(strp);
+        let patches = DiffMatchPatch::patch_from_text(strp)?;
         assert_eq!(strp, DiffMatchPatch::patch_to_text(&patches));
+
+        Ok(())
     }
 
     #[test]
-    fn test_patch_make() {
+    fn test_patch_make() -> Result<(), crate::errors::Error> {
         let dmp = DiffMatchPatch::default();
-        let patches = dmp.patch_make(super::PatchInput::Texts("", ""));
+        let patches = dmp.patch_make(super::PatchInput::Texts("", ""))?;
         assert!(patches.is_empty());
 
         let txt1 = "The quick brown fox jumps over the lazy dog.";
         let txt2 = "That quick brown fox jumped over a lazy dog.";
 
         // The second patch must be "-21,17 +21,18", not "-22,17 +21,18" due to rolling context.
-        let patches = dmp.patch_make(crate::dmp::PatchInput::Texts(txt2, txt1));
+        let patches = dmp.patch_make(crate::dmp::PatchInput::Texts(txt2, txt1))?;
         assert_eq!("@@ -1,8 +1,7 @@\n Th\n-at\n+e\n  qui\n@@ -21,17 +21,18 @@\n jump\n-ed\n+s\n  over \n-a\n+the\n  laz\n", DiffMatchPatch::patch_to_text(&patches));
 
         // Text1+Text2 inputs.
-        let patches = dmp.patch_make(crate::dmp::PatchInput::Texts(txt1, txt2));
+        let patches = dmp.patch_make(crate::dmp::PatchInput::Texts(txt1, txt2))?;
         assert_eq!("@@ -1,11 +1,12 @@\n Th\n-e\n+at\n  quick b\n@@ -22,18 +22,17 @@\n jump\n-s\n+ed\n  over \n-the\n+a\n  laz\n", DiffMatchPatch::patch_to_text(&patches));
 
         // Diff input.
         // var diffs = dmp.diff_main(text1, text2, false);
-        let diffs = dmp.diff_main(txt1, txt2);
-        let patches = dmp.patch_make(crate::dmp::PatchInput::Diffs(&diffs[..]));
+        let diffs = dmp.diff_main(txt1, txt2)?;
+        let patches = dmp.patch_make(crate::dmp::PatchInput::Diffs(&diffs[..]))?;
         assert_eq!("@@ -1,11 +1,12 @@\n Th\n-e\n+at\n  quick b\n@@ -22,18 +22,17 @@\n jump\n-s\n+ed\n  over \n-the\n+a\n  laz\n", DiffMatchPatch::patch_to_text(&patches));
 
         // Text1+Diff inputs.
-        let patches = dmp.patch_make(crate::dmp::PatchInput::TextDiffs(txt1, &diffs[..]));
+        let patches = dmp.patch_make(crate::dmp::PatchInput::TextDiffs(txt1, &diffs[..]))?;
         assert_eq!("@@ -1,11 +1,12 @@\n Th\n-e\n+at\n  quick b\n@@ -22,18 +22,17 @@\n jump\n-s\n+ed\n  over \n-the\n+a\n  laz\n", DiffMatchPatch::patch_to_text(&patches));
 
         // Character encoding.
         let patches = dmp.patch_make(crate::dmp::PatchInput::Texts(
             "`1234567890-=[]\\;',./",
             "~!@#$%^&*()_+{}|:\"<>?",
-        ));
+        ))?;
         assert_eq!(
             percent_encoding::percent_decode(b"@@ -1,21 +1,21 @@\n-%601234567890-=%5B%5D%5C;',./\n+~!@#$%25%5E&*()_+%7B%7D%7C:%22%3C%3E?\n").decode_utf8().unwrap(),
             DiffMatchPatch::patch_to_text(&patches)
@@ -3435,13 +3671,13 @@ mod tests {
         ];
         assert_eq!(
             diffs,
-            DiffMatchPatch::patch_from_text("@@ -1,21 +1,21 @@\n-%601234567890-=%5B%5D%5C;',./\n+~!@#$%25%5E&*()_+%7B%7D%7C:%22%3C%3E?\n")[0].diffs
+            DiffMatchPatch::patch_from_text("@@ -1,21 +1,21 @@\n-%601234567890-=%5B%5D%5C;',./\n+~!@#$%25%5E&*()_+%7B%7D%7C:%22%3C%3E?\n")?[0].diffs
         );
 
         // Long string with repeats.
         let txt1 = vec!["abcdef"; 100].join("");
         let txt2 = [&txt1, "123"].join("");
-        let patches = dmp.patch_make(crate::dmp::PatchInput::Texts(&txt1, &txt2));
+        let patches = dmp.patch_make(crate::dmp::PatchInput::Texts(&txt1, &txt2))?;
         assert_eq!(
             "@@ -573,28 +573,31 @@\n cdefabcdefabcdefabcdefabcdef\n+123\n",
             DiffMatchPatch::patch_to_text(&patches)
@@ -3454,6 +3690,8 @@ mod tests {
         // } catch (e) {
         //   // Exception expected.
         // }
+
+        Ok(())
     }
 
     #[test]
@@ -3495,10 +3733,10 @@ mod tests {
     }
 
     #[test]
-    fn test_patch_add_padding() {
+    fn test_patch_add_padding() -> Result<(), crate::errors::Error> {
         let dmp = DiffMatchPatch::default();
         // Both edges full.
-        let mut patches = dmp.patch_make(PatchInput::Texts("", "test"));
+        let mut patches = dmp.patch_make(PatchInput::Texts("", "test"))?;
         assert_eq!(
             "@@ -0,0 +1,4 @@\n+test\n",
             DiffMatchPatch::patch_to_text(&patches)
@@ -3510,7 +3748,7 @@ mod tests {
         );
 
         // Both edges partial.
-        let mut patches = dmp.patch_make(PatchInput::Texts("XY", "XtestY"));
+        let mut patches = dmp.patch_make(PatchInput::Texts("XY", "XtestY"))?;
         assert_eq!(
             "@@ -1,2 +1,6 @@\n X\n+test\n Y\n",
             DiffMatchPatch::patch_to_text(&patches)
@@ -3522,7 +3760,7 @@ mod tests {
         );
 
         // Both edges none.
-        let mut patches = dmp.patch_make(PatchInput::Texts("XXXXYYYY", "XXXXtestYYYY"));
+        let mut patches = dmp.patch_make(PatchInput::Texts("XXXXYYYY", "XXXXtestYYYY"))?;
         assert_eq!(
             "@@ -1,8 +1,12 @@\n XXXX\n+test\n YYYY\n",
             DiffMatchPatch::patch_to_text(&patches)
@@ -3534,17 +3772,19 @@ mod tests {
                 .unwrap(),
             DiffMatchPatch::patch_to_text(&patches)
         );
+
+        Ok(())
     }
 
     #[test]
-    fn test_patch_split_max() {
+    fn test_patch_split_max() -> Result<(), crate::errors::Error> {
         let dmp = DiffMatchPatch::default();
 
         // Assumes that dmp.Match_MaxBits is 32.
         let mut patches = dmp.patch_make(PatchInput::Texts(
             "abcdefghijklmnopqrstuvwxyz01234567890",
             "XabXcdXefXghXijXklXmnXopXqrXstXuvXwxXyzX01X23X45X67X89X0",
-        ));
+        ))?;
         dmp.split_max(&mut patches);
         assert_eq!(
             "@@ -1,32 +1,46 @@\n+X\n ab\n+X\n cd\n+X\n ef\n+X\n gh\n+X\n ij\n+X\n kl\n+X\n mn\n+X\n op\n+X\n qr\n+X\n st\n+X\n uv\n+X\n wx\n+X\n yz\n+X\n 012345\n@@ -25,13 +39,18 @@\n zX01\n+X\n 23\n+X\n 45\n+X\n 67\n+X\n 89\n+X\n 0\n",
@@ -3554,7 +3794,7 @@ mod tests {
         let mut patches = dmp.patch_make(PatchInput::Texts(
             "abcdef1234567890123456789012345678901234567890123456789012345678901234567890uvwxyz",
             "abcdefuvwxyz",
-        ));
+        ))?;
         let p2t = DiffMatchPatch::patch_to_text(&patches);
         dmp.split_max(&mut patches);
         assert_eq!(p2t, DiffMatchPatch::patch_to_text(&patches));
@@ -3562,7 +3802,7 @@ mod tests {
         let mut patches = dmp.patch_make(PatchInput::Texts(
             "1234567890123456789012345678901234567890123456789012345678901234567890",
             "abc",
-        ));
+        ))?;
         dmp.split_max(&mut patches);
         assert_eq!(
             "@@ -1,32 +1,4 @@\n-1234567890123456789012345678\n 9012\n@@ -29,32 +1,4 @@\n-9012345678901234567890123456\n 7890\n@@ -57,14 +1,3 @@\n-78901234567890\n+abc\n",
@@ -3572,20 +3812,22 @@ mod tests {
         let mut patches = dmp.patch_make(PatchInput::Texts(
             "abcdefghij , h : 0 , t : 1 abcdefghij , h : 0 , t : 1 abcdefghij , h : 0 , t : 1",
             "abcdefghij , h : 1 , t : 1 abcdefghij , h : 1 , t : 1 abcdefghij , h : 0 , t : 1",
-        ));
+        ))?;
         dmp.split_max(&mut patches);
         assert_eq!(
             "@@ -2,32 +2,32 @@\n bcdefghij , h : \n-0\n+1\n  , t : 1 abcdef\n@@ -29,32 +29,32 @@\n bcdefghij , h : \n-0\n+1\n  , t : 1 abcdef\n",
             DiffMatchPatch::patch_to_text(&patches)
         );
+
+        Ok(())
     }
 
     #[test]
-    fn test_patch_apply() {
+    fn test_patch_apply() -> Result<(), crate::errors::Error> {
         let mut dmp = DiffMatchPatch::default();
 
-        let patches = dmp.patch_make(PatchInput::Texts("", ""));
-        let (txt, results) = dmp.patch_apply_internal(&patches, b"Hello world.");
+        let patches = dmp.patch_make(PatchInput::Texts("", ""))?;
+        let (txt, results) = dmp.patch_apply_internal(&patches, b"Hello world.")?;
         assert_eq!(
             format!("{}\t{}", std::str::from_utf8(&txt).unwrap(), results.len()),
             "Hello world.\t0"
@@ -3594,7 +3836,7 @@ mod tests {
         let patches = dmp.patch_make(PatchInput::Texts(
             "The quick brown fox jumps over the lazy dog.",
             "That quick brown fox jumped over a lazy dog.",
-        ));
+        ))?;
 
         // Exact match
         assert_eq!(
@@ -3602,7 +3844,7 @@ mod tests {
                 b"That quick brown fox jumped over a lazy dog.".to_vec(),
                 vec![true, true]
             ),
-            dmp.patch_apply_internal(&patches, b"The quick brown fox jumps over the lazy dog.")
+            dmp.patch_apply_internal(&patches, b"The quick brown fox jumps over the lazy dog.")?
         );
 
         // Partial match
@@ -3614,7 +3856,7 @@ mod tests {
             dmp.patch_apply_internal(
                 &patches,
                 b"The quick red rabbit jumps over the tired tiger."
-            )
+            )?
         );
 
         // Failed match
@@ -3623,29 +3865,29 @@ mod tests {
                 b"I am the very model of a modern major general.".to_vec(),
                 vec![false, false]
             ),
-            dmp.patch_apply_internal(&patches, b"I am the very model of a modern major general.")
+            dmp.patch_apply_internal(&patches, b"I am the very model of a modern major general.")?
         );
 
         // Big delete, small change
         let patches = dmp.patch_make(PatchInput::Texts(
             "x1234567890123456789012345678901234567890123456789012345678901234567890y",
             "xabcy",
-        ));
-        assert_eq!((b"xabcy".to_vec(), vec![true, true]), dmp.patch_apply_internal(&patches, b"x123456789012345678901234567890-----++++++++++-----123456789012345678901234567890y"));
+        ))?;
+        assert_eq!((b"xabcy".to_vec(), vec![true, true]), dmp.patch_apply_internal(&patches, b"x123456789012345678901234567890-----++++++++++-----123456789012345678901234567890y")?);
 
         // Big delete, large change
         let patches = dmp.patch_make(PatchInput::Texts(
             "x1234567890123456789012345678901234567890123456789012345678901234567890y",
             "xabcy",
-        ));
-        assert_eq!((b"xabc12345678901234567890---------------++++++++++---------------12345678901234567890y".to_vec(), vec![false, true]), dmp.patch_apply_internal(&patches, b"x12345678901234567890---------------++++++++++---------------12345678901234567890y"));
+        ))?;
+        assert_eq!((b"xabc12345678901234567890---------------++++++++++---------------12345678901234567890y".to_vec(), vec![false, true]), dmp.patch_apply_internal(&patches, b"x12345678901234567890---------------++++++++++---------------12345678901234567890y")?);
 
         dmp.delete_threshold = 0.6;
         let patches = dmp.patch_make(PatchInput::Texts(
             "x1234567890123456789012345678901234567890123456789012345678901234567890y",
             "xabcy",
-        ));
-        assert_eq!((b"xabcy".to_vec(), vec![true, true]), dmp.patch_apply_internal(&patches, b"x12345678901234567890---------------++++++++++---------------12345678901234567890y"));
+        ))?;
+        assert_eq!((b"xabcy".to_vec(), vec![true, true]), dmp.patch_apply_internal(&patches, b"x12345678901234567890---------------++++++++++---------------12345678901234567890y")?);
         dmp.delete_threshold = 0.5;
 
         // Compesate for failed patch
@@ -3654,7 +3896,7 @@ mod tests {
         let patches = dmp.patch_make(PatchInput::Texts(
             "abcdefghijklmnopqrstuvwxyz--------------------1234567890",
             "abcXXXXXXXXXXdefghijklmnopqrstuvwxyz--------------------1234567YYYYYYYYYY890",
-        ));
+        ))?;
         assert_eq!(
             (
                 b"ABCDEFGHIJKLMNOPQRSTUVWXYZ--------------------1234567YYYYYYYYYY890".to_vec(),
@@ -3663,45 +3905,47 @@ mod tests {
             dmp.patch_apply_internal(
                 &patches,
                 b"ABCDEFGHIJKLMNOPQRSTUVWXYZ--------------------1234567890"
-            )
+            )?
         );
         dmp.match_threshold = 0.5;
         dmp.match_distance = 1000;
 
         // No side-effects - kinds useless cos patches is not mutable in rust
-        let patches = dmp.patch_make(PatchInput::Texts("", "test"));
+        let patches = dmp.patch_make(PatchInput::Texts("", "test"))?;
         let srcstr = DiffMatchPatch::patch_to_text(&patches);
-        dmp.patch_apply_internal(&patches, b"");
+        dmp.patch_apply_internal(&patches, b"")?;
         assert_eq!(srcstr, DiffMatchPatch::patch_to_text(&patches));
 
         let patches = dmp.patch_make(PatchInput::Texts(
             "The quick brown fox jumps over the lazy dog.",
             "Woof",
-        ));
+        ))?;
         let srcstr = DiffMatchPatch::patch_to_text(&patches);
-        dmp.patch_apply_internal(&patches, b"The quick brown fox jumps over the lazy dog.");
+        dmp.patch_apply_internal(&patches, b"The quick brown fox jumps over the lazy dog.")?;
         assert_eq!(srcstr, DiffMatchPatch::patch_to_text(&patches));
 
         // Edge exact match
-        let patches = dmp.patch_make(PatchInput::Texts("", "test"));
+        let patches = dmp.patch_make(PatchInput::Texts("", "test"))?;
         assert_eq!(
             (b"test".to_vec(), vec![true]),
-            dmp.patch_apply_internal(&patches, b"")
+            dmp.patch_apply_internal(&patches, b"")?
         );
 
         // Near edge exact match
-        let patches = dmp.patch_make(PatchInput::Texts("XY", "XtestY"));
+        let patches = dmp.patch_make(PatchInput::Texts("XY", "XtestY"))?;
         assert_eq!(
             (b"XtestY".to_vec(), vec![true]),
-            dmp.patch_apply_internal(&patches, b"XY")
+            dmp.patch_apply_internal(&patches, b"XY")?
         );
 
         // Edge partial match
-        let patches = dmp.patch_make(PatchInput::Texts("y", "y123"));
+        let patches = dmp.patch_make(PatchInput::Texts("y", "y123"))?;
         assert_eq!(
             (b"x123".to_vec(), vec![true]),
-            dmp.patch_apply_internal(&patches, b"x")
+            dmp.patch_apply_internal(&patches, b"x")?
         );
+
+        Ok(())
     }
 
     #[test]
