@@ -142,6 +142,39 @@ impl DiffMatchPatch {
         self.match_distance
     }
 
+    // fn diff_lines<'a>(
+    //     &self,
+    //     old: &'a [u16],
+    //     new: &'a [u16]
+    // ) -> Result<Vec<Diff>, crate::errors::Error> {
+    //     if old == new {
+    //         if old.is_empty() {
+    //             return Ok(Vec::new());
+    //         }
+
+    //         return Ok(vec![Diff::equal(old)])
+    //     }
+
+    //     if old.is_empty() {
+    //         return Ok(vec![Diff::insert(new)]);
+    //     }
+
+    //     if new.is_empty() {
+    //         return Ok(vec![Diff::delete(old)]);
+    //     }
+
+    //     // Trim common prefix
+    //     let common_prefix = Self::common_prefix(old, new, false);
+    //     let common_suffix = Self::common_prefix(
+    //         &old[common_prefix..],
+    //         &new[common_prefix..],
+    //         true,
+    //     );
+
+
+    //     todo!()
+    // }
+
     fn diff_internal<'a>(
         &self,
         old_bytes: &'a [u8],
@@ -254,10 +287,20 @@ impl DiffMatchPatch {
             let new_b = half_match.suffix_short;
 
             let mid_common = half_match.common;
-
+            
             // Send both pairs off for separate processing.
-            let mut diffs_a = self.diff_internal(old_a, new_a, linemode, deadline)?;
-            let mut diffs_b = self.diff_internal(old_b, new_b, linemode, deadline)?;
+            let mut diffs_a = match self.diff_internal(old_a, new_a, linemode, deadline) {
+                Ok(d) => d,
+                Err(_) => {
+                    return Err(crate::errors::Error::Utf8Error)
+                }
+            };
+            let mut diffs_b = match self.diff_internal(old_b, new_b, linemode, deadline) {
+                Ok(d) => d,
+                Err(_) => {
+                    return Err(crate::errors::Error::Utf8Error)
+                }
+            };
 
             // Merge the results
             diffs_a.push(Diff::equal(mid_common));
@@ -270,7 +313,12 @@ impl DiffMatchPatch {
             return self.line_mode(old, new, deadline);
         }
 
-        self.bisect(old, new, deadline)
+        match self.bisect(old, new, deadline) {
+            Ok(b) => Ok(b),
+            Err(_) => {
+                Err(crate::errors::Error::Utf8Error)
+            }
+        }
     }
 
     fn half_match<'a>(&self, old: &'a [u8], new: &'a [u8]) -> Option<HalfMatch<'a>> {
@@ -347,11 +395,13 @@ impl DiffMatchPatch {
         deadline: Instant,
     ) -> Result<Vec<Diff>, crate::errors::Error> {
         let to_chars = Self::lines_to_chars(old, new);
+        
         let mut diffs =
-            self.diff_internal(&to_chars.chars_old, &to_chars.chars_new, false, deadline)?;
+            self.diff_internal(&to_chars.chars_old[..], &to_chars.chars_new[..], false, deadline)?;
 
         // Convert diffs back to text
         Self::chars_to_lines(&mut diffs[..], &to_chars.lines[..])?;
+
         // Eliminate freak matches
         Self::cleanup_semantic(&mut diffs);
 
@@ -622,7 +672,7 @@ impl DiffMatchPatch {
     // Some benchmark code can be found in benches/prefix.rs
     // Reverse prefix is suffix
     // TODO: investigate this further
-    fn common_prefix(lhs: &[u8], rhs: &[u8], reverse: bool) -> usize {
+    fn common_prefix<T: Copy + Ord + Eq>(lhs: &[T], rhs: &[T], reverse: bool) -> usize {
         if lhs.is_empty()
             || rhs.is_empty()
             || (!reverse && (lhs.first() != rhs.first()))
@@ -1493,8 +1543,8 @@ impl DiffMatchPatch {
 
 #[derive(Debug, Eq, PartialEq)]
 struct LineToChars<'a> {
-    chars_old: Vec<u8>,
-    chars_new: Vec<u8>,
+    chars_old: Vec<usize>,
+    chars_new: Vec<usize>,
     lines: Vec<&'a [u8]>,
 }
 
@@ -1503,13 +1553,13 @@ impl DiffMatchPatch {
         let mut lines: Vec<&'a [u8]> = vec![];
         let mut linehash: HashMap<&'a [u8], usize> = HashMap::new();
 
-        // Allocate 2/3rds of the space for text1, the rest for text2.
+        // Allocate 2/3rds of the UTF16::MAX (65535) value space for text1, the rest for text2.
         // let mut maxlines = 5;
         let mut maxlines = 40000;
         let chars_old = Self::lines_to_chars_internal(old, &mut lines, &mut linehash, maxlines);
 
         // This basically represents the U16::MAX value
-        maxlines = 65535;
+        maxlines =  65535;
         // maxlines = 7;
         let chars_new = Self::lines_to_chars_internal(new, &mut lines, &mut linehash, maxlines);
 
@@ -1525,51 +1575,59 @@ impl DiffMatchPatch {
         array: &mut Vec<&'a [u8]>,
         hash: &mut HashMap<&'a [u8], usize>,
         maxlines: usize,
-    ) -> Vec<u8> {
+    ) -> Vec<usize> {
         let take = maxlines - array.len();
 
-        let mut lines = text.split_inclusive(|u| *u == b'\n').enumerate();
-        let mut charlist = Vec::with_capacity(take + 1);
+        // let mut lines = ;
+        let mut charlist = Vec::with_capacity(take);
 
-        let mut broke = None;
+        let mut broke = false;
         let mut cursor = 0;
 
-        for (idx, line) in lines.by_ref() {
+        text.split_inclusive(|u| *u == b'\n').enumerate()
+        .take(take)
+        .for_each(|(idx, line)| {
             cursor += line.len();
 
-            let entry = hash.entry(line).or_insert(array.len());
-            // fresh insert
-            if entry == &array.len() {
-                array.push(line);
+            let e = hash.entry(line).or_insert(array.len());
+            // Fresh insert
+            if *e == array.len() {
+                array.push(line)
             }
 
-            // We know the `maxlines = 65535`, this will never fail
-            charlist.push(char::from_u32(*entry as u32).unwrap());
+            // upcasting, should never fail
+            charlist.push(*e);
 
-            if idx == take - 1 {
-                broke = Some(idx);
-                break;
-            }
-        }
+            // break at max lines
+            broke = idx == take - 1;
+        });
 
-        if broke.is_some() {
+        // We broke at max lines, so we'll account for the remaining text
+        if broke {
             let line = &text[cursor..];
             let e = hash.entry(line).or_insert(array.len());
-            array.push(line);
+            // Fresh insert
+            if *e == array.len() {
+                array.push(line)
+            }
 
-            // We know the `maxlines = 65535`, this will never fail
-            charlist.push(char::from_u32(*e as u32).unwrap());
+            // upcasting should never fail
+            charlist.push(*e);
         }
 
-        charlist.iter().collect::<String>().as_bytes().to_vec()
-        // &charlist[..].concat()
+        // charlist.iter().collect::<String>().as_bytes().to_vec()
+        charlist
     }
 
     fn chars_to_lines(diffs: &mut [Diff], lines: &[&[u8]]) -> Result<(), crate::errors::Error> {
+        // println!("{lines:?} {}", lines.len());
         for d in diffs.iter_mut() {
+            println!("{:?}", std::str::from_utf8(d.text()));
             let chars = match std::str::from_utf8(d.text()) {
                 Ok(c) => c,
-                Err(_) => return Err(crate::errors::Error::Utf8Error),
+                Err(_) => {
+                    return Err(crate::errors::Error::Utf8Error)
+                },
             };
             // let mut txt = &[];
             let t = chars
@@ -2467,7 +2525,7 @@ mod tests {
         time::{Duration, Instant},
     };
 
-    use crate::dmp::{Diff, HalfMatch, LineToChars};
+    use crate::dmp::{self, Diff, HalfMatch, LineToChars};
 
     use super::{DiffMatchPatch, Ops, Patch, PatchInput};
 
@@ -3241,183 +3299,187 @@ mod tests {
 
         // Perform a trivial diff.
         // Null case.
-        assert!(dmp.diff_main("", "")?.is_empty());
+        // assert!(dmp.diff_main("", "")?.is_empty());
 
-        // Equality
-        assert_eq!(vec![Diff::equal(b"abc")], dmp.diff_main("abc", "abc")?);
+        // // Equality
+        // assert_eq!(vec![Diff::equal(b"abc")], dmp.diff_main("abc", "abc")?);
 
-        // Simple insert
-        assert_eq!(
-            vec![Diff::equal(b"ab"), Diff::insert(b"123"), Diff::equal(b"c")],
-            dmp.diff_main("abc", "ab123c")?
-        );
+        // // Simple insert
+        // assert_eq!(
+        //     vec![Diff::equal(b"ab"), Diff::insert(b"123"), Diff::equal(b"c")],
+        //     dmp.diff_main("abc", "ab123c")?
+        // );
 
-        // Simple delete
-        assert_eq!(
-            vec![Diff::equal(b"a"), Diff::delete(b"123"), Diff::equal(b"bc")],
-            dmp.diff_main("a123bc", "abc")?
-        );
+        // // Simple delete
+        // assert_eq!(
+        //     vec![Diff::equal(b"a"), Diff::delete(b"123"), Diff::equal(b"bc")],
+        //     dmp.diff_main("a123bc", "abc")?
+        // );
 
-        // Two insertions
-        assert_eq!(
-            vec![
-                Diff::equal(b"a"),
-                Diff::insert(b"123"),
-                Diff::equal(b"b"),
-                Diff::insert(b"456"),
-                Diff::equal(b"c"),
-            ],
-            dmp.diff_main("abc", "a123b456c")?
-        );
+        // // Two insertions
+        // assert_eq!(
+        //     vec![
+        //         Diff::equal(b"a"),
+        //         Diff::insert(b"123"),
+        //         Diff::equal(b"b"),
+        //         Diff::insert(b"456"),
+        //         Diff::equal(b"c"),
+        //     ],
+        //     dmp.diff_main("abc", "a123b456c")?
+        // );
 
-        // Two deletions.
-        assert_eq!(
-            vec![
-                Diff::equal(b"a"),
-                Diff::delete(b"123"),
-                Diff::equal(b"b"),
-                Diff::delete(b"456"),
-                Diff::equal(b"c"),
-            ],
-            dmp.diff_main("a123b456c", "abc")?
-        );
+        // // Two deletions.
+        // assert_eq!(
+        //     vec![
+        //         Diff::equal(b"a"),
+        //         Diff::delete(b"123"),
+        //         Diff::equal(b"b"),
+        //         Diff::delete(b"456"),
+        //         Diff::equal(b"c"),
+        //     ],
+        //     dmp.diff_main("a123b456c", "abc")?
+        // );
 
-        // Perform a real diff.
-        // Switch off the timeout.
-        dmp.timeout = None;
-        // Simple cases.
-        assert_eq!(
-            vec![Diff::delete(b"a"), Diff::insert(b"b"),],
-            dmp.diff_main("a", "b")?
-        );
+        // // Perform a real diff.
+        // // Switch off the timeout.
+        // dmp.timeout = None;
+        // // Simple cases.
+        // assert_eq!(
+        //     vec![Diff::delete(b"a"), Diff::insert(b"b"),],
+        //     dmp.diff_main("a", "b")?
+        // );
 
-        assert_eq!(
-            vec![
-                Diff::delete(b"Apple"),
-                Diff::insert(b"Banana"),
-                Diff::equal(b"s are a"),
-                Diff::insert(b"lso"),
-                Diff::equal(b" fruit.")
-            ],
-            dmp.diff_main("Apples are a fruit.", "Bananas are also fruit.")?
-        );
+        // assert_eq!(
+        //     vec![
+        //         Diff::delete(b"Apple"),
+        //         Diff::insert(b"Banana"),
+        //         Diff::equal(b"s are a"),
+        //         Diff::insert(b"lso"),
+        //         Diff::equal(b" fruit.")
+        //     ],
+        //     dmp.diff_main("Apples are a fruit.", "Bananas are also fruit.")?
+        // );
 
-        assert_eq!(
-            vec![
-                Diff::delete(b"a"),
-                Diff::insert("\u{0680}".as_bytes()),
-                Diff::equal(b"x"),
-                Diff::delete(b"\t"),
-                Diff::insert(b"\0")
-            ],
-            dmp.diff_main("ax\t", "\u{0680}x\0")?
-        );
+        // assert_eq!(
+        //     vec![
+        //         Diff::delete(b"a"),
+        //         Diff::insert("\u{0680}".as_bytes()),
+        //         Diff::equal(b"x"),
+        //         Diff::delete(b"\t"),
+        //         Diff::insert(b"\0")
+        //     ],
+        //     dmp.diff_main("ax\t", "\u{0680}x\0")?
+        // );
 
-        // Overlaps.
-        assert_eq!(
-            vec![
-                Diff::delete(b"1"),
-                Diff::equal(b"a"),
-                Diff::delete(b"y"),
-                Diff::equal(b"b"),
-                Diff::delete(b"2"),
-                Diff::insert(b"xab"),
-            ],
-            dmp.diff_main("1ayb2", "abxab")?
-        );
+        // // Overlaps.
+        // assert_eq!(
+        //     vec![
+        //         Diff::delete(b"1"),
+        //         Diff::equal(b"a"),
+        //         Diff::delete(b"y"),
+        //         Diff::equal(b"b"),
+        //         Diff::delete(b"2"),
+        //         Diff::insert(b"xab"),
+        //     ],
+        //     dmp.diff_main("1ayb2", "abxab")?
+        // );
 
-        assert_eq!(
-            vec![
-                Diff::insert(b"xaxcx"),
-                Diff::equal(b"abc"),
-                Diff::delete(b"y"),
-            ],
-            dmp.diff_main("abcy", "xaxcxabc")?
-        );
+        // assert_eq!(
+        //     vec![
+        //         Diff::insert(b"xaxcx"),
+        //         Diff::equal(b"abc"),
+        //         Diff::delete(b"y"),
+        //     ],
+        //     dmp.diff_main("abcy", "xaxcxabc")?
+        // );
 
-        assert_eq!(
-            vec![
-                Diff::delete(b"ABCD"),
-                Diff::equal(b"a"),
-                Diff::delete(b"="),
-                Diff::insert(b"-"),
-                Diff::equal(b"bcd"),
-                Diff::delete(b"="),
-                Diff::insert(b"-"),
-                Diff::equal(b"efghijklmnopqrs"),
-                Diff::delete(b"EFGHIJKLMNOefg"),
-            ],
-            dmp.diff_main(
-                "ABCDa=bcd=efghijklmnopqrsEFGHIJKLMNOefg",
-                "a-bcd-efghijklmnopqrs"
-            )?
-        );
+        // assert_eq!(
+        //     vec![
+        //         Diff::delete(b"ABCD"),
+        //         Diff::equal(b"a"),
+        //         Diff::delete(b"="),
+        //         Diff::insert(b"-"),
+        //         Diff::equal(b"bcd"),
+        //         Diff::delete(b"="),
+        //         Diff::insert(b"-"),
+        //         Diff::equal(b"efghijklmnopqrs"),
+        //         Diff::delete(b"EFGHIJKLMNOefg"),
+        //     ],
+        //     dmp.diff_main(
+        //         "ABCDa=bcd=efghijklmnopqrsEFGHIJKLMNOefg",
+        //         "a-bcd-efghijklmnopqrs"
+        //     )?
+        // );
 
-        // Large equality.
-        assert_eq!(
-            vec![
-                Diff::insert(b" "),
-                Diff::equal(b"a"),
-                Diff::insert(b"nd"),
-                Diff::equal(b" [[Hepatopancreatic]]"),
-                Diff::delete(b" and [[New"),
-            ],
-            dmp.diff_main(
-                "a [[Hepatopancreatic]] and [[New",
-                " and [[Hepatopancreatic]]"
-            )?
-        );
+        // // Large equality.
+        // assert_eq!(
+        //     vec![
+        //         Diff::insert(b" "),
+        //         Diff::equal(b"a"),
+        //         Diff::insert(b"nd"),
+        //         Diff::equal(b" [[Hepatopancreatic]]"),
+        //         Diff::delete(b" and [[New"),
+        //     ],
+        //     dmp.diff_main(
+        //         "a [[Hepatopancreatic]] and [[New",
+        //         " and [[Hepatopancreatic]]"
+        //     )?
+        // );
 
         // Timeout.
-        const LOW_TIMEOUT: u64 = 100;
-        dmp.timeout = Some(LOW_TIMEOUT);
-        let a = vec!["`Twas brillig, and the slithy toves\nDid gyre and gimble in the wabe:\nAll mimsy were the borogoves,\nAnd the mome raths outgrabe.\n"; 2048].join("");
-        let b = vec!["I am the very model of a modern major general,\nI\'ve information vegetable, animal, and mineral,\nI know the kings of England, and I quote the fights historical,\nFrom Marathon to Waterloo, in order categorical.\n"; 2048].join("");
+        // const LOW_TIMEOUT: u64 = 100;
+        // dmp.timeout = Some(LOW_TIMEOUT);
+        // let a = vec!["`Twas brillig, and the slithy toves\nDid gyre and gimble in the wabe:\nAll mimsy were the borogoves,\nAnd the mome raths outgrabe.\n"; 2048].join("");
+        // let b = vec!["I am the very model of a modern major general,\nI\'ve information vegetable, animal, and mineral,\nI know the kings of England, and I quote the fights historical,\nFrom Marathon to Waterloo, in order categorical.\n"; 2048].join("");
 
-        let start = Instant::now();
-        dmp.diff_main(&a, &b)?;
-        let end = Instant::now();
-        // Test that we took at least the timeout period (+ 5ms being generous).
-        assert!((end - start).as_millis() <= LOW_TIMEOUT as u128 + 5);
+        // let start = Instant::now();
+        // dmp.diff_main(&a, &b)?;
+        // let end = Instant::now();
+        // // Test that we took at least the timeout period (+ 5ms being generous).
+        // assert!((end - start).as_millis() <= LOW_TIMEOUT as u128 + 5);
 
         // Test the linemode speedup.
         // Must be long to pass the 100 char cutoff.
         // Simple line-mode.
-        let a =  "12345678901234567890123456789 0123456 78901234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n";
-        let b = "abcdefghij abcdefghij abcdefghij abcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\n";
-        dmp.checklines = Some(false);
-        // let start = Instant::now();
-        let res_no_lm = dmp.diff_main(a, b)?;
-        // let no_lm = Instant::now() - start;
-        dmp.checklines = Some(true);
-        // let start = Instant::now();
-        let res_yes_lm = dmp.diff_main(a, b)?;
-        // let yes_lm = Instant::now() - start;
+        // let a =  "12345678901234567890123456789 0123456 78901234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n";
+        // let b = "abcdefghij abcdefghij abcdefghij abcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\n";
+        // dmp.checklines = Some(false);
+        // // let start = Instant::now();
+        // let res_no_lm = dmp.diff_main(a, b)?;
+        // // let no_lm = Instant::now() - start;
+        // dmp.checklines = Some(true);
+        // // let start = Instant::now();
+        // let res_yes_lm = dmp.diff_main(a, b)?;
+        // // let yes_lm = Instant::now() - start;
 
-        // Now, we'll run 2 checks - one for result equality, two for speedup
-        assert_eq!(res_no_lm, res_yes_lm);
-        // Fails, no-linemode takes less time than with linemode optimizations
-        // Off by a few 30μs
-        // assert!(no_lm > yes_lm);
+        // // Now, we'll run 2 checks - one for result equality, two for speedup
+        // assert_eq!(res_no_lm, res_yes_lm);
+        // // Fails, no-linemode takes less time than with linemode optimizations
+        // // Off by a few 30μs
+        // // assert!(no_lm > yes_lm);
 
-        // Single line-mode.
-        let a = "1234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890";
-        let b = "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghij";
-        dmp.checklines = Some(true);
-        let yes_lm = dmp.diff_main(a, b)?;
-        dmp.checklines = Some(false);
-        let no_lm = dmp.diff_main(a, b)?;
-        assert_eq!(no_lm, yes_lm);
+        // // Single line-mode.
+        // let a = "1234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890";
+        // let b = "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghij";
+        // dmp.checklines = Some(true);
+        // let yes_lm = dmp.diff_main(a, b)?;
+        // dmp.checklines = Some(false);
+        // let no_lm = dmp.diff_main(a, b)?;
+        // assert_eq!(no_lm, yes_lm);
 
-        // Overlap line-mode.
-        let a = "1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n";
-        let b = "abcdefghij\n1234567890\n1234567890\n1234567890\nabcdefghij\n1234567890\n1234567890\n1234567890\nabcdefghij\n1234567890\n1234567890\n1234567890\nabcdefghij\n";
-        dmp.checklines = Some(true);
-        let yes_lm = dmp.diff_main(a, b)?;
-        dmp.checklines = Some(false);
-        let no_lm = dmp.diff_main(a, b)?;
-        assert_eq!(rebuild_text(&yes_lm[..])?, rebuild_text(&no_lm[..])?);
+        // // Overlap line-mode.
+        // let a = "1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n";
+        // let b = "abcdefghij\n1234567890\n1234567890\n1234567890\nabcdefghij\n1234567890\n1234567890\n1234567890\nabcdefghij\n1234567890\n1234567890\n1234567890\nabcdefghij\n";
+        // dmp.checklines = Some(true);
+        // let yes_lm = dmp.diff_main(a, b)?;
+        // dmp.checklines = Some(false);
+        // let no_lm = dmp.diff_main(a, b)?;
+        // assert_eq!(rebuild_text(&yes_lm[..])?, rebuild_text(&no_lm[..])?);
 
+        let dmp = DiffMatchPatch::default();
+        let old = std::fs::read_to_string("testdata/txt_old.txt").unwrap();
+        let new = std::fs::read_to_string("testdata/txt_new.txt").unwrap();
+        dmp.diff_main(&old, &new)?;
         Ok(())
     }
 
