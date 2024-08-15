@@ -1,3 +1,4 @@
+use core::str;
 use std::{
     char,
     collections::HashMap,
@@ -960,8 +961,9 @@ impl DiffMatchPatch {
                 let delete = diffs[pointer - 1].data().to_vec();
                 let insert = diffs[pointer].data().to_vec();
 
-                let delete_thres = delete.len() / 2 + if delete.len() % 2 > 0 { 1 } else { 0 };
-                let insert_thres = insert.len() / 2 + if insert.len() % 2 > 0 { 1 } else { 0 };
+                
+                let delete_thres = delete.len() / 2 + delete.len() % 2;
+                let insert_thres = insert.len() / 2 + insert.len() % 2;
 
                 let overlap_1 = Self::common_overlap(&delete[..], &insert[..]);
                 let overlap_2 = Self::common_overlap(&insert[..], &delete[..]);
@@ -1136,8 +1138,6 @@ impl DiffMatchPatch {
 
         let mut insert_data = vec![];
         let mut delete_data = vec![];
-
-        // let mut commonlen = 0;
 
         while pointer < difflen {
             match diffs[pointer].op() {
@@ -2436,7 +2436,7 @@ impl DiffMatchPatch {
     ///  A diff of two unrelated texts can be filled with coincidental matches.
     /// For example, the diff of "mouse" and "sofas" is [(-1, "m"), (1, "s"), (0, "o"), (-1, "u"), (1, "fa"), (0, "s"), (-1, "e")].
     /// While this is the optimum diff, it is difficult for humans to understand. Semantic cleanup rewrites the diff, expanding it into a more intelligible format.
-    /// The above example would become: [(-1, "mouse"), (1, "sofas")]. If a diff is to be human-readable, it should be passed to diff_cleanupSemantic.
+    /// The above example would become: [(-1, "mouse"), (1, "sofas")]. If a diff is to be human-readable, it should be passed to diff_cleanup_semantic.
     pub fn diff_cleanup_semantic(diffs: &mut Vec<Diff<u8>>) {
         Self::cleanup_semantic(diffs)
     }
@@ -2470,7 +2470,46 @@ impl DiffMatchPatch {
 
     /// Takes a diff array and returns a pretty HTML sequence. This function is mainly intended as an example from which to write ones own display functions.
     pub fn diff_pretty_html(diffs: &[Diff<u8>]) -> String {
-        todo!()
+        let html = diffs.iter().enumerate()
+        .map(|(idx, diff)| {
+            let txt = match str::from_utf8(diff.data()) {
+                Ok(txt) => {
+                    txt.replace("&", "&amp;").replace("<", "&lt;")
+                    .replace(">", "&gt;").replace("\n", "&para;<br>")
+                },
+                Err(e) => {
+                    println!("{e:?}");
+                    // finding previous of same type
+                    let mut prev = idx;
+                    while prev > 0 && diffs[prev].op() != diff.op() {
+                        prev -= 1;
+                    }
+                    
+                    println!("Prev: {:?}", diffs[prev]);
+                    println!("{:?}", diff.data());
+
+                    if idx < diffs.len() - 2 {
+                        let mut  next = idx + 1;
+                        while next < diffs.len() - 1 && diffs[next].op() != diff.op() {
+                            next += 1;
+                        }
+
+                        println!("Next: {:?}", diffs[next]);
+                    }
+                    "error".to_string()
+                }  
+            };
+
+            match diff.op() {
+                Ops::Insert => format!("<ins style=\"background:#e6ffe6;\">{txt}</ins>"),
+                Ops::Delete => format!("<del style=\"background:#ffe6e6;\">{txt}</del>"),
+                Ops::Equal => format!("<span>{txt}</span>")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("");
+
+        html
     }
 
     pub fn match_main(&self, text: &str, pattern: &str, loc: usize) -> Option<usize> {
@@ -2624,7 +2663,6 @@ mod tests {
     // const tests = [
     //     'testDiffIsDestructurable', // TODO
     //     'testDiffCleanupEfficiency',
-    //     'testDiffPrettyHtml',
     //     'testDiffDelta',
     // ];
 
@@ -3348,6 +3386,21 @@ mod tests {
         );
 
         Ok(())
+    }
+
+    #[test]
+    fn test_diff_pretty_html() {
+        // let diffs = [Diff::equal(b"a\n"), Diff::delete(b"<B>b</B>"), Diff::insert(b"c&d")];
+        // assert_eq!("<span>a&para;<br></span><del style=\"background:#ffe6e6;\">&lt;B&gt;b&lt;/B&gt;</del><ins style=\"background:#e6ffe6;\">c&amp;d</ins>", DiffMatchPatch::diff_pretty_html(&diffs));
+    
+        let dmp = DiffMatchPatch::default();
+        let old = std::fs::read_to_string("testdata/txt_old.txt").unwrap();
+        let new = std::fs::read_to_string("testdata/txt_new.txt").unwrap();
+        let mut diffs = dmp.diff_main(&old, &new).unwrap();
+        // DiffMatchPatch::cleanup_semantic(&mut diffs);
+
+        std::fs::write("testdata/diff.html", DiffMatchPatch::diff_pretty_html(&diffs)).unwrap();
+        // println!("{}", );
     }
 
     #[test]
