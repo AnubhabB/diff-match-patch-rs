@@ -3,7 +3,6 @@ use std::path::Path;
 use criterion::{criterion_group, criterion_main, Criterion};
 use diff_match_patch_rs::dmp::DiffMatchPatch;
 
-
 fn diff_main(c: &mut Criterion) {
     let basedir = Path::new("testdata");
     let old = std::fs::read_to_string(basedir.join("txt_old.txt")).unwrap();
