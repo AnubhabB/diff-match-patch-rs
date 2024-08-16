@@ -7,13 +7,16 @@ use std::{
 };
 
 use percent_encoding::{percent_decode, percent_encode, CONTROLS};
+#[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "serde")]
 use serde_repr::{Deserialize_repr, Serialize_repr};
 
 use crate::{errors::Error, traits::BisectSplit};
 
 /// Enum representing the different ops of diff
-#[derive(Debug, PartialEq, Eq, Clone, Copy, Serialize_repr, Deserialize_repr)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[cfg_attr(feature = "serde", derive(Serialize_repr, Deserialize_repr))]
 #[repr(i8)]
 pub enum Ops {
     Delete = -1,
@@ -25,7 +28,8 @@ pub enum Ops {
 /// (Ops::Delete, String::new("Hello")) means delete `Hello`
 /// (Ops::Insert, String::new("Goodbye")) means add `Goodbye`
 /// (Ops::Equal, String::new("World")) means keep world
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Diff<T: Copy + Ord + Eq>(Ops, Vec<T>);
 
 impl<T: Copy + Ord + Eq> Diff<T> {
@@ -65,23 +69,21 @@ pub struct DiffMatchPatch {
     checklines: Option<bool>,
     /// A default timeout in num milliseconda, defaults to 1000 (1 second)
     timeout: Option<u64>,
-    // At what point is no match declared (0.0 = perfection, 1.0 = very loose).
+    /// At what point is no match declared (0.0 = perfection, 1.0 = very loose).
     match_threshold: f32,
-    // How far to search for a match (0 = exact location, 1000+ = broad match).
-    // A match this many characters away from the expected location will add
-    // 1.0 to the score (0.0 is a perfect match).
-    // int Match_Distance;
+    /// How far to search for a match (0 = exact location, 1000+ = broad match).
+    /// A match this many characters away from the expected location will add
+    /// 1.0 to the score (0.0 is a perfect match).
+    /// int Match_Distance;
     match_distance: usize,
-
-    // When deleting a large block of text (over ~64 characters), how close does
-    // the contents have to match the expected contents. (0.0 = perfection,
-    // 1.0 = very loose).  Note that Match_Threshold controls how closely the
-    // end points of a delete need to match.
+    /// When deleting a large block of text (over ~64 characters), how close does
+    /// the contents have to match the expected contents. (0.0 = perfection,
+    /// 1.0 = very loose).  Note that Match_Threshold controls how closely the
+    /// end points of a delete need to match.
     delete_threshold: f32,
-    // Chunk size for context length.
+    /// Chunk size for context length.
     patch_margin: u16,
-
-    // The number of bits in an int.
+    /// The number of bits in an int.
     match_max_bits: usize,
 }
 
