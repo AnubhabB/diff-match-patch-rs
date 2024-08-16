@@ -1,5 +1,4 @@
 # diff-match-patch-rs: Efficient port of Google's diff-match-patch implemented in Rust
-======================================================================================
 
 This library is a port of the [Diff Match Patch](https://github.com/dmsnell/diff-match-patch) to Rust. The
 diff implementation is based on [Myers' diff algorithm](https://neil.fraser.name/writing/diff/myers.pdf).
