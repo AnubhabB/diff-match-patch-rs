@@ -2756,7 +2756,7 @@ mod tests {
     use super::{DiffMatchPatch, Ops, Patch, PatchInput};
 
     // const tests = [
-    //     'testDiffIsDestructurable', // TODO
+    //     'testDiffIsDestructurable',
     //     'testDiffCleanupEfficiency',
     //     'testDiffDelta',
     // ];
