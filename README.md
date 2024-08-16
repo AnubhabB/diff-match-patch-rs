@@ -9,11 +9,16 @@ diff implementation is based on [Myers' diff algorithm](https://neil.fraser.name
 
 ## Benchmarks
 Benchmarks are maintained [diff-match-patch-bench repository](https://github.com/AnubhabB/diff-match-patch-rs-bench)
+
 [TODO] Add benchmarks
 
-Diff Match Patch was originally built in 2006 to power Google Docs.
 
-[Diff Match Patch]: https://github.com/google/diff-match-patch (and it's fork https://github.com/dmsnell/diff-match-patch)
-[Myers' diff algorithm]: https://neil.fraser.name/writing/diff/myers.pdf
-[semantic cleanups]: https://neil.fraser.name/writing/diff/
+## Related projects
+
+Diff Match Patch was originally built in 2006 to power Google Docs.
+- [Diff Match Patch](https://github.com/google/diff-match-patch) (and it's [fork](https://github.com/dmsnell/diff-match-patch))
+- **Rust**: [Distil.io diff_match_patch](https://crates.io/crates/diff_match_patch)
+- **Rust**: [dmp](https://crates.io/crates/dmp)
+- **Rust**: [Dissimilar](https://crates.io/crates/dissimilar) by the awesome [David Tolnay](https://github.com/dtolnay)
+
 
