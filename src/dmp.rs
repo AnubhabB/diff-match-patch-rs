@@ -961,7 +961,6 @@ impl DiffMatchPatch {
                 let delete = diffs[pointer - 1].data().to_vec();
                 let insert = diffs[pointer].data().to_vec();
 
-                
                 let delete_thres = delete.len() / 2 + delete.len() % 2;
                 let insert_thres = insert.len() / 2 + insert.len() % 2;
 
@@ -2469,47 +2468,143 @@ impl DiffMatchPatch {
     }
 
     /// Takes a diff array and returns a pretty HTML sequence. This function is mainly intended as an example from which to write ones own display functions.
-    pub fn diff_pretty_html(diffs: &[Diff<u8>]) -> String {
-        let html = diffs.iter().enumerate()
-        .map(|(idx, diff)| {
-            let txt = match str::from_utf8(diff.data()) {
-                Ok(txt) => {
-                    txt.replace("&", "&amp;").replace("<", "&lt;")
-                    .replace(">", "&gt;").replace("\n", "&para;<br>")
-                },
-                Err(e) => {
-                    println!("{e:?}");
-                    // finding previous of same type
-                    let mut prev = idx;
-                    while prev > 0 && diffs[prev].op() != diff.op() {
-                        prev -= 1;
-                    }
-                    
-                    println!("Prev: {:?}", diffs[prev]);
-                    println!("{:?}", diff.data());
+    pub fn diff_pretty_html(diffs: &[Diff<u8>]) -> Result<String, crate::errors::Error> {
+        let mut diffs = diffs.to_vec();
+        DiffMatchPatch::cleanup_semantic(&mut diffs);
 
-                    if idx < diffs.len() - 2 {
-                        let mut  next = idx + 1;
-                        while next < diffs.len() - 1 && diffs[next].op() != diff.op() {
-                            next += 1;
+        // let mut err_idx = None;
+        // let mut error_bytes = vec![];
+
+        let mut idx = 0_usize;
+        let mut err_prefix = vec![];
+
+        let mut err_start = None;
+
+        // First pass, we'll chomp of errors in the diffs?
+        // The pattern we have seen is that
+        while idx < diffs.len() {
+            let diff = &mut diffs[idx];
+
+            // println!("[{idx}] {:?}: {:?}", diff.op(), diff.data());
+
+            if let Err(e) = str::from_utf8(diff.data()) {
+                // println!("{e:?} ------------ ErrStart[{err_start:?}]");
+
+                // Errors can come in 2 forms
+                // 1. error at the end of bytes - we'll keep prefixing the error bytes to all non equalities that follow
+                // 2. error at the begining of bytes - this one is tricky - we'll need to figure out the suffix at which the rest of the string is valid
+                if e.error_len().is_none() && err_start.is_none() {
+                    err_start = Some(idx);
+
+                    if diff.op() == Ops::Equal {
+                        err_prefix = diff.data()[e.valid_up_to()..].to_vec();
+                        diff.1 = if e.valid_up_to() > 0 {
+                            diff.data()[..e.valid_up_to()].to_vec()
+                        } else {
+                            vec![]
+                        };
+                        // println!("Err prefix: {:?} @ Index[{idx}]", err_prefix);
+                        idx += 1;
+                        continue;
+                    }
+                }
+
+                if let Some(err_start_idx) = err_start {
+                    // For insert and delete add the prefix collected earlier (end error bytes)
+                    if diff.op() == Ops::Delete || diff.op() == Ops::Insert {
+                        diff.1 = [&err_prefix, diff.data()].concat();
+                        // println!("{:?} After update prefix: {:?}", diff.op(), diff.data());
+                    } else {
+                        if let Some(err_len) = e.error_len() {
+                            // Iteratively figure out at what point does the error go away if at-all
+                            let mut suffix = diff.data()[..err_len].to_vec();
+                            let mut data = diff.data()[err_len..].to_vec();
+
+                            while let Err(e) = std::str::from_utf8(&data) {
+                                if e.error_len().is_none() {
+                                    break;
+                                }
+
+                                // should never panic cos empty data is also a valid utf8
+                                let first_byte = data.remove(0);
+                                suffix.push(first_byte);
+                            }
+
+                            // here, we have a suffix to be added to all previous cases and a data that might be good string or error at the end of bytes
+                            // which is a separate cycle
+
+                            // println!("Err suffix: {suffix:?}");
+                            // Let's add the suffix to all the intermediate steps
+                            diff.1 = data.to_vec();
+                            // println!("Current diff after update: {:?}", diff.data().to_vec());
+                            diffs
+                                .iter_mut()
+                                .take(idx)
+                                .skip(err_start_idx)
+                                .for_each(|d| {
+                                    if d.op() == Ops::Equal {
+                                        return;
+                                    }
+                                    d.1 = [d.data(), &suffix[..]].concat();
+                                    // println!("[{:?}] After update suffix: {:?}", d.op(), d.data());
+                                });
+
+                            // An equality within edits, lets seek the next one and update this suffix too
+                            if data.is_empty() {
+                                if idx < diffs.len() - 1 && diffs[idx + 1].op() != Ops::Equal {
+                                    diffs[idx + 1].1 =
+                                        [&err_prefix[..], &suffix, diffs[idx + 1].data()].concat();
+                                    // println!("[{:?}] After update trivial suffix + prefix: {:?}", diffs[idx + 1].op(), diffs[idx + 1].data());
+                                }
+
+                                diffs.remove(idx);
+                            }
                         }
 
-                        println!("Next: {:?}", diffs[next]);
+                        // Move back to where all of this started
+                        idx = err_start_idx;
+                        err_start = None;
+                        err_prefix = vec![];
+                        // println!("<<<<<<<<<<<<<<<<<<<<<<<<< Move back {idx}");
+                        continue;
                     }
-                    "error".to_string()
-                }  
-            };
-
-            match diff.op() {
-                Ops::Insert => format!("<ins style=\"background:#e6ffe6;\">{txt}</ins>"),
-                Ops::Delete => format!("<del style=\"background:#ffe6e6;\">{txt}</del>"),
-                Ops::Equal => format!("<span>{txt}</span>")
+                }
             }
-        })
-        .collect::<Vec<_>>()
-        .join("");
+            idx += 1;
+        }
 
-        html
+        let mut is_err = false;
+        let html = diffs
+            .iter()
+            .map(|diff| {
+                let txt = match str::from_utf8(diff.data()) {
+                    Ok(txt) => txt
+                        .replace("&", "&amp;")
+                        .replace("<", "&lt;")
+                        .replace(">", "&gt;")
+                        .replace("\n", "&para;<br>"),
+                    Err(e) => {
+                        eprintln!("{e:?}");
+                        is_err = true;
+                        "error".to_string()
+                    }
+                };
+
+                match diff.op() {
+                    Ops::Insert => format!("<ins style=\"background:#e6ffe6;\">{txt}</ins>"),
+                    Ops::Delete => format!("<del style=\"background:#ffe6e6;\">{txt}</del>"),
+                    Ops::Equal => format!("<span>{txt}</span>"),
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("");
+
+        if !is_err {
+            Ok(html)
+        } else {
+            Err(crate::errors::Error::HtmlWithError(html))
+        }
+        // Ok(html)
     }
 
     pub fn match_main(&self, text: &str, pattern: &str, loc: usize) -> Option<usize> {
@@ -3389,18 +3484,95 @@ mod tests {
     }
 
     #[test]
-    fn test_diff_pretty_html() {
-        // let diffs = [Diff::equal(b"a\n"), Diff::delete(b"<B>b</B>"), Diff::insert(b"c&d")];
-        // assert_eq!("<span>a&para;<br></span><del style=\"background:#ffe6e6;\">&lt;B&gt;b&lt;/B&gt;</del><ins style=\"background:#e6ffe6;\">c&amp;d</ins>", DiffMatchPatch::diff_pretty_html(&diffs));
-    
-        let dmp = DiffMatchPatch::default();
-        let old = std::fs::read_to_string("testdata/txt_old.txt").unwrap();
-        let new = std::fs::read_to_string("testdata/txt_new.txt").unwrap();
-        let mut diffs = dmp.diff_main(&old, &new).unwrap();
-        // DiffMatchPatch::cleanup_semantic(&mut diffs);
+    fn test_diff_pretty_html() -> Result<(), crate::errors::Error> {
+        // Basic
+        let diffs = [
+            Diff::equal(b"a\n"),
+            Diff::delete(b"<B>b</B>"),
+            Diff::insert(b"c&d"),
+        ];
+        assert_eq!("<span>a&para;<br></span><del style=\"background:#ffe6e6;\">&lt;B&gt;b&lt;/B&gt;</del><ins style=\"background:#e6ffe6;\">c&amp;d</ins>", DiffMatchPatch::diff_pretty_html(&diffs)?);
 
-        std::fs::write("testdata/diff.html", DiffMatchPatch::diff_pretty_html(&diffs)).unwrap();
-        // println!("{}", );
+        // Monkey busiess around Emoticons and extended utf-8 🤪🤩🤔
+        // This gave me a lot of heart-burn
+        let dmp = DiffMatchPatch::default();
+
+        // Case 1. Two similar emoticons
+        // In bytes representation, these would have the last u8 different
+        // Which means the the diff should an equality block of 3 bytes folloed by insert and delete
+        let old = "🤪"; // [240, 159, 164, 170]
+        let new = "🤔"; // [240, 159, 164, 148]
+        let diffs = dmp.diff_main(old, new)?;
+        assert_eq!(
+            "<span></span><del style=\"background:#ffe6e6;\">🤪</del><ins style=\"background:#e6ffe6;\">🤔</ins>",
+            DiffMatchPatch::diff_pretty_html(&diffs)?
+        );
+
+        // Now Case 1. but with some text before and after
+        let old = "I'm puzzled🤪 or am I?";
+        let new = "I'm puzzled🤔 or thinking I guess!";
+        let diffs = dmp.diff_main(old, new)?;
+        assert_eq!(
+            "<span>I'm puzzled</span><del style=\"background:#ffe6e6;\">🤪</del><ins style=\"background:#e6ffe6;\">🤔</ins><span> or </span><del style=\"background:#ffe6e6;\">am I?</del><ins style=\"background:#e6ffe6;\">thinking I guess!</ins>",
+            DiffMatchPatch::diff_pretty_html(&diffs)?
+        );
+
+        // Case 2. Emoticons with the third position different
+        let old = "🍊"; // [240, 159, 141, 138]
+        let new = "🌊"; // [240, 159, 140, 138]
+        let diffs = dmp.diff_main(old, new)?;
+        assert_eq!(
+            "<span></span><del style=\"background:#ffe6e6;\">🍊</del><ins style=\"background:#e6ffe6;\">🌊</ins>",
+            DiffMatchPatch::diff_pretty_html(&diffs)?
+        );
+
+        // Now Case 2. but with some text, lets complicate this
+        let old = "🍊, aah orange is the new black!"; // [240, 159, 141, 138]
+        let new = "Aah orange!🌊is the new 🌊"; // [240, 159, 140, 138]
+        let diffs = dmp.diff_main(old, new)?;
+        assert_eq!(
+            "<del style=\"background:#ffe6e6;\">🍊, a</del><ins style=\"background:#e6ffe6;\">A</ins><span>ah orange</span><del style=\"background:#ffe6e6;\"> </del><ins style=\"background:#e6ffe6;\">!🌊</ins><span>is the new </span><del style=\"background:#ffe6e6;\">black!</del><ins style=\"background:#e6ffe6;\">🌊</ins>",
+            DiffMatchPatch::diff_pretty_html(&diffs)?
+        );
+
+        // Case 3. with second and third different, but lets complicate this with an equality
+        let old = "𠌊"; // [240, 160, 140, 138]
+        let new = "𖠊"; // [240, 150, 160, 138]
+        let diffs = dmp.diff_main(old, new)?;
+        assert_eq!(
+            "<span></span><ins style=\"background:#e6ffe6;\">𖠊</ins><del style=\"background:#ffe6e6;\">𠌊</del>",
+            DiffMatchPatch::diff_pretty_html(&diffs)?
+        );
+
+        // Case 3. but let there be a swap
+        let old = "𞠄"; // [240, 158, 160, 132]
+        let new = std::str::from_utf8(&[240, 160, 158, 132]).unwrap(); // basically an undefined element `𠞄`. Should still work
+        let diffs = dmp.diff_main(old, new)?;
+        assert_eq!(
+            "<span></span><del style=\"background:#ffe6e6;\">𞠄</del><ins style=\"background:#e6ffe6;\">𠞄</ins>",
+            DiffMatchPatch::diff_pretty_html(&diffs)?
+        );
+
+        // Case 4. swap at the last 2 positions
+        let old = "🍌"; // [240, 159, 141, 140] -- FINALLY A BANANA
+        let new = "🌍"; // [240, 159, 140, 141] -- interesting revelation - last 2 bytes swapped and 🍌 becomes 🌍. Guess the world is going `Bananas!!`
+        let diffs = dmp.diff_main(old, new)?;
+        assert_eq!(
+            "<span></span><del style=\"background:#ffe6e6;\">🍌</del><ins style=\"background:#e6ffe6;\">🌍</ins>",
+            DiffMatchPatch::diff_pretty_html(&diffs)?
+        );
+
+        // Let's do this with a slightly longish string
+        let old = "Now, let's explore some emotional extremes 🌊.\nWe've got your ecstatic face 🤩, your devastated face 😭, and your utterly confused face 🤯. But that's not all! 🤔 We've also got some subtle emotions like 😐, 🙃, and 👀.";
+        let new = "Let's start with some basics 😊.\nWe've got your standard smiley face 🙂, your sad face ☹️, and your angry face 😠. But wait, there's more! 🤩 We've also got some more complex emotions like 😍, 🤤, and 🚀. And let's not forget about the classics: 😉, 👍, and 👏.";
+        let diffs = dmp.diff_main(old, new)?;
+
+        assert_eq!(
+            "<del style=\"background:#ffe6e6;\">Now, let's explore some emotional extreme</del><ins style=\"background:#e6ffe6;\">Let's start with some basic</ins><span>s </span><del style=\"background:#ffe6e6;\">🌊</del><ins style=\"background:#e6ffe6;\">😊</ins><span>.&para;<br>We've got your </span><del style=\"background:#ffe6e6;\">ec</del><span>sta</span><del style=\"background:#ffe6e6;\">tic</del><ins style=\"background:#e6ffe6;\">ndard smiley</ins><span> face </span><del style=\"background:#ffe6e6;\">🤩</del><ins style=\"background:#e6ffe6;\">🙂</ins><span>, your </span><del style=\"background:#ffe6e6;\">devastate</del><ins style=\"background:#e6ffe6;\">sa</ins><span>d face </span><del style=\"background:#ffe6e6;\">😭</del><ins style=\"background:#e6ffe6;\">☹️</ins><span>, and your </span><del style=\"background:#ffe6e6;\">utterly confused</del><ins style=\"background:#e6ffe6;\">angry</ins><span> face </span><del style=\"background:#ffe6e6;\">🤯</del><ins style=\"background:#e6ffe6;\">😠</ins><span>. But </span><del style=\"background:#ffe6e6;\">that's not all</del><ins style=\"background:#e6ffe6;\">wait, there's more</ins><span>! </span><del style=\"background:#ffe6e6;\">🤔</del><ins style=\"background:#e6ffe6;\">🤩</ins><span> We've also got some </span><del style=\"background:#ffe6e6;\">subt</del><ins style=\"background:#e6ffe6;\">more comp</ins><span>le</span><ins style=\"background:#e6ffe6;\">x</ins><span> emotions like </span><del style=\"background:#ffe6e6;\">😐</del><ins style=\"background:#e6ffe6;\">😍, 🤤, and 🚀. And let's not forget about the classics: 😉</ins><span>, </span><del style=\"background:#ffe6e6;\">🙃</del><ins style=\"background:#e6ffe6;\">👍</ins><span>, and </span><del style=\"background:#ffe6e6;\">👀</del><ins style=\"background:#e6ffe6;\">👏</ins><span>.</span>",
+            DiffMatchPatch::diff_pretty_html(&diffs)?
+        );
+
+        Ok(())
     }
 
     #[test]
