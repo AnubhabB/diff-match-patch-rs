@@ -3572,6 +3572,12 @@ mod tests {
             DiffMatchPatch::diff_pretty_html(&diffs)?
         );
 
+        let old = std::fs::read_to_string("testdata/txt_old.txt").unwrap(); // [240, 159, 141, 140] -- FINALLY A BANANA
+        let new = std::fs::read_to_string("testdata/txt_new.txt").unwrap(); // [240, 159, 141, 140] -- FINALLY A BANANA
+        let diffs = dmp.diff_main(&old, &new)?;
+
+        std::fs::write("testdata/diff.html", DiffMatchPatch::diff_pretty_html(&diffs)?).unwrap();
+
         Ok(())
     }
 
