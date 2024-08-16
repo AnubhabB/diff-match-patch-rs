@@ -20,5 +20,7 @@ Diff Match Patch was originally built in 2006 to power Google Docs.
 - **Rust**: [Distil.io diff_match_patch](https://crates.io/crates/diff_match_patch)
 - **Rust**: [dmp](https://crates.io/crates/dmp)
 - **Rust**: [Dissimilar](https://crates.io/crates/dissimilar) by the awesome [David Tolnay](https://github.com/dtolnay)
+- **Rust**: [diff_match_patch](https://crates.io/crates/diff_match_patch)
+- **Rust**: [diffmatchpatch](https://crates.io/crates/diffmatchpatch)
 
 
