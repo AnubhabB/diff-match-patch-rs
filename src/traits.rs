@@ -30,9 +30,7 @@ impl BisectSplit for u8 {
 
         // Compute both diffs serially.
         let mut diffs_a = dmp.diff_internal(old_a, new_a, false, deadline)?;
-        let mut diffs_b = dmp.diff_internal(old_b, new_b, false, deadline)?;
-
-        diffs_a.append(&mut diffs_b);
+        diffs_a.append(&mut dmp.diff_internal(old_b, new_b, false, deadline)?);
 
         Ok(diffs_a)
     }
@@ -55,9 +53,7 @@ impl BisectSplit for usize {
 
         // Compute both diffs serially.
         let mut diffs_a = dmp.diff_lines(old_a, new_a, deadline)?;
-        let mut diffs_b = dmp.diff_lines(old_b, new_b, deadline)?;
-
-        diffs_a.append(&mut diffs_b);
+        diffs_a.append(&mut dmp.diff_lines(old_b, new_b, deadline)?);
 
         Ok(diffs_a)
     }

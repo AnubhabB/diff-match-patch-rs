@@ -34,3 +34,13 @@ harness = false
 [[bench]]
 name = "diff"
 harness = false
+
+[[bench]]
+name = "bisect"
+harness = false
+
+# [profile.bench]
+# debug = true
+
+# [profile.release]
+# debug = true

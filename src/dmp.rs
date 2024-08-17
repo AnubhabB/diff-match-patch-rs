@@ -60,6 +60,11 @@ impl<T: Copy + Ord + Eq> Diff<T> {
     pub fn data(&self) -> &[T] {
         &self.1[..]
     }
+
+    // returns length of data
+    pub fn size(&self) -> usize {
+        self.1.len()
+    }
 }
 
 pub struct DiffMatchPatch {
@@ -362,13 +367,13 @@ impl DiffMatchPatch {
         new: &'a [u8],
         deadline: Instant,
     ) -> Result<Vec<Diff<u8>>, crate::errors::Error> {
-        let to_chars = Self::lines_to_chars(old, new);
-
-        let diffs = self.diff_lines(&to_chars.chars_old[..], &to_chars.chars_new[..], deadline)?;
-
-        // Convert diffs back to text
-        let mut diffs = Self::chars_to_lines(&diffs[..], &to_chars.lines[..]);
-
+        let mut diffs = {
+            let to_chars = Self::lines_to_chars(old, new);
+            let mut diffs = self.diff_lines(&to_chars.chars_old[..], &to_chars.chars_new[..], deadline)?;
+            // Convert diffs back to text
+            Self::chars_to_lines(&mut diffs[..], &to_chars.lines[..])
+        };
+        
         // Eliminate freak matches
         Self::cleanup_semantic(&mut diffs);
 
@@ -392,13 +397,11 @@ impl DiffMatchPatch {
             match diffs[pointer].op() {
                 Ops::Insert => {
                     insert_n += 1;
-                    let mut data = diffs[pointer].data().to_vec();
-                    insert_data.append(&mut data);
+                    insert_data = [&insert_data[..], diffs[pointer].data()].concat();
                 }
                 Ops::Delete => {
                     delete_n += 1;
-                    let mut data = diffs[pointer].data().to_vec();
-                    delete_data.append(&mut data);
+                    delete_data = [&delete_data[..], diffs[pointer].data()].concat();
                 }
                 Ops::Equal => {
                     // Upon reaching an equality, check for prior redundancies.
@@ -470,9 +473,7 @@ impl DiffMatchPatch {
         )?;
 
         if common_prefix > 0 {
-            let mut d = vec![Diff::equal(&old[..common_prefix])];
-            d.append(&mut diffs);
-            diffs = d;
+            diffs.insert(0, Diff::equal(&old[..common_prefix]));
         }
 
         if common_suffix > 0 {
@@ -564,7 +565,7 @@ impl DiffMatchPatch {
     // Find the 'middle snake' of a diff, split the problem in two
     // and return the recursively constructed diff.
     // See Myers 1986 paper: An O(ND) Difference Algorithm and Its Variations.
-    fn bisect<'a, T: BisectSplit>(
+    pub fn bisect<'a, T: BisectSplit>(
         &self,
         old: &'a [T],
         new: &'a [T],
@@ -574,14 +575,14 @@ impl DiffMatchPatch {
         let new_len = new.len() as i32;
 
         let max_d = (old_len + new_len + 1) / 2;
-        let v_offset = max_d as usize;
+        let v_offset = max_d;
         let v_len = 2 * max_d;
 
         let mut v1 = vec![-1_i32; v_len as usize];
         let mut v2 = vec![-1_i32; v_len as usize];
 
-        v1[v_offset + 1] = 0;
-        v2[v_offset + 1] = 0;
+        v1[v_offset as usize + 1] = 0;
+        v2[v_offset as usize + 1] = 0;
 
         let delta = old_len - new_len;
 
@@ -604,7 +605,7 @@ impl DiffMatchPatch {
 
             // Walk the front path one step
             for k1 in (k1start - d..d - k1end + 1).step_by(2) {
-                let k1_offset = (v_offset as i32 + k1) as usize;
+                let k1_offset = (v_offset + k1) as usize;
                 let mut x1 = if k1 == -d || (k1 != d && v1[k1_offset - 1] < v1[k1_offset + 1]) {
                     v1[k1_offset + 1]
                 } else {
@@ -626,7 +627,7 @@ impl DiffMatchPatch {
                     // Ran of the bottom of the graph
                     k1start += 2;
                 } else if front {
-                    let k2_offset = v_offset as i32 + delta - k1;
+                    let k2_offset = v_offset + delta - k1;
                     if k2_offset >= 0 && k2_offset < v_len && v2[k2_offset as usize] != -1 {
                         // Mirror x2 onto top-left coodinate system
                         let x2 = old_len - v2[k2_offset as usize];
@@ -647,7 +648,7 @@ impl DiffMatchPatch {
 
             // Walk the reverse path one step
             for k2 in (k2start - d..d - k2end + 1).step_by(2) {
-                let k2_offset = (v_offset as i32 + k2) as usize;
+                let k2_offset = (v_offset + k2) as usize;
 
                 let mut x2 = if k2 == -d || (k2 != d && v2[k2_offset - 1] < v2[k2_offset + 1]) {
                     v2[k2_offset + 1]
@@ -672,10 +673,10 @@ impl DiffMatchPatch {
                     // Ran off the top of the graph
                     k2start += 2;
                 } else if !front {
-                    let k1_offset = v_offset as i32 + delta - k2;
+                    let k1_offset = v_offset + delta - k2;
                     if k1_offset >= 0 && k1_offset < v_len && v1[k1_offset as usize] != -1 {
                         let x1 = v1[k1_offset as usize];
-                        let y1 = v_offset as i32 + x1 - k1_offset;
+                        let y1 = v_offset + x1 - k1_offset;
 
                         // Mirror x2 onto top-left coordinate system
                         x2 = old_len - x2;
@@ -698,21 +699,12 @@ impl DiffMatchPatch {
 
         Ok(vec![Diff::delete(old), Diff::insert(new)])
     }
-
-    // fn bisect_split(
-    //     &self,
-    //     old: &[u8],
-    //     new: &[u8],
-    //     x: usize,
-    //     y: usize,
-    //     deadline: Instant,
-    // ) -> Result<Vec<Diff<u8>>, crate::errors::Error> {
-
-    // }
+    
 
     // Does a substring of shorttext exist within longtext such that the substring
     // is at least half the length of longtext?
     //idx Start index of quarter length substring within longtext.
+    #[inline]
     fn half_match_i<'a, T: Copy + Ord + Eq>(
         long: &'a [T],
         short: &'a [T],
@@ -721,6 +713,7 @@ impl DiffMatchPatch {
         // Start with a 1/4 length substring at position i as a seed.
 
         let seed = &long[idx..idx + long.len() / 4];
+        let seedleen = seed.len();
         let mut j = 0;
 
         let mut best_common: &[T] = &[];
@@ -730,7 +723,7 @@ impl DiffMatchPatch {
         let mut best_short_b: &[T] = &[];
 
         while let Some(pos) = &short[j..]
-            .windows(seed.len())
+            .windows(seedleen)
             .step_by(1)
             .position(|p| p == seed)
         {
@@ -770,6 +763,7 @@ impl DiffMatchPatch {
     // Some benchmark code can be found in benches/prefix.rs
     // Reverse prefix is suffix
     // TODO: investigate this further
+    #[inline]
     fn common_prefix<T: Copy + Ord + Eq>(lhs: &[T], rhs: &[T], reverse: bool) -> usize {
         if lhs.is_empty()
             || rhs.is_empty()
@@ -808,6 +802,7 @@ impl DiffMatchPatch {
         pointmid
     }
 
+    #[inline]
     fn common_overlap(lhs: &[u8], rhs: &[u8]) -> usize {
         if lhs.is_empty() || rhs.is_empty() {
             return 0;
@@ -859,6 +854,7 @@ impl DiffMatchPatch {
     }
 
     // Reduce the number of edits by eliminating semantically trivial equalities
+    #[inline]
     fn cleanup_semantic(diffs: &mut Vec<Diff<u8>>) {
         let mut changes = false;
 
@@ -894,9 +890,9 @@ impl DiffMatchPatch {
                 // Ops::Insert || Ops::Delete
                 // Increasing changes of post_equality metrics
                 if diffs[pointer].op() == Ops::Insert {
-                    insert_len_post += diffs[pointer].data().len();
+                    insert_len_post += diffs[pointer].size();
                 } else {
-                    delete_len_post += diffs[pointer].data().len();
+                    delete_len_post += diffs[pointer].size();
                 }
 
                 // Eliminate an equality that is smaller or equal to the edits on both
@@ -996,6 +992,7 @@ impl DiffMatchPatch {
 
     // Look for single edits surrounded on both sides by equalities
     // e.g: The c<ins>at c</ins>ame. -> The <ins>cat </ins>came.
+    #[inline]
     fn cleanup_semantic_lossless(diffs: &mut Vec<Diff<u8>>) {
         let mut pointer = 1_usize;
         let mut difflen = diffs.len();
@@ -1004,23 +1001,34 @@ impl DiffMatchPatch {
         while difflen > 0 && pointer < difflen - 1 {
             // an edit surrounded by equalities
             if diffs[pointer - 1].op() == Ops::Equal && diffs[pointer + 1].op() == Ops::Equal {
-                let mut equality_prev = diffs[pointer - 1].data().to_vec();
-                let mut edit = diffs[pointer].data().to_vec();
-                let mut equality_next = diffs[pointer + 1].data().to_vec();
+                // let mut equality_prev = diffs[pointer - 1].data().to_vec();
+                // let mut edit = diffs[pointer].data().to_vec();
+                // let mut equality_next = diffs[pointer + 1].data().to_vec();
 
                 // Shift the edit as far left as possible
-                let commonlen = Self::common_prefix(&equality_prev[..], &edit[..], true);
-                if commonlen > 0 {
-                    let mut common_prev = edit[edit.len() - commonlen..].to_vec();
-                    let mut common_next = common_prev.clone();
-
-                    equality_prev = equality_prev[..equality_prev.len() - commonlen].to_vec();
-                    common_prev.append(&mut edit[..edit.len() - commonlen].to_vec());
-                    edit = common_prev;
-
-                    common_next.append(&mut equality_next.to_vec());
-                    equality_next = common_next;
-                }
+                let (
+                    mut equality_prev,
+                    mut edit,
+                    mut equality_next
+                ) = {
+                    let commonlen = Self::common_prefix(&diffs[pointer - 1].data(), &diffs[pointer].data(), true);
+                    if commonlen > 0 {
+                        let common = &diffs[pointer].data()[diffs[pointer].size() - commonlen ..];
+                        
+                        (
+                            diffs[pointer - 1].data()[.. diffs[pointer - 1].size() - commonlen].to_vec(),
+                            [common, &diffs[pointer].data()[.. diffs[pointer].size() - commonlen]].concat(),
+                            [common, diffs[pointer + 1].data()].concat()
+                        )
+                    } else {
+                        (
+                            diffs[pointer - 1].data().to_vec(),
+                            diffs[pointer].data().to_vec(),
+                            diffs[pointer + 1].data().to_vec()
+                        )
+                    }
+                };
+                
 
                 // Step byte by byte right looking for the best fit
                 let mut best_equality_prev = equality_prev.clone();
@@ -1052,17 +1060,17 @@ impl DiffMatchPatch {
                 // We have an improvement, save it back to the diff.
                 if diffs[pointer - 1].data() != best_equality_prev {
                     if !best_equality_prev.is_empty() {
-                        diffs[pointer - 1].1 = best_equality_prev.to_vec();
+                        diffs[pointer - 1].1.clone_from(&best_equality_prev);
                     } else {
                         diffs.remove(pointer - 1);
                         pointer -= 1;
                         difflen = diffs.len();
                     }
 
-                    diffs[pointer].1 = best_edit.to_vec();
+                    diffs[pointer].1.clone_from(&best_edit);
 
                     if !best_equality_next.is_empty() {
-                        diffs[pointer + 1].1 = best_equality_next.to_vec();
+                        diffs[pointer + 1].1.clone_from(&best_equality_next);
                     } else {
                         diffs.remove(pointer + 1);
                         pointer -= 1;
@@ -1078,6 +1086,7 @@ impl DiffMatchPatch {
     // Given two strings, compute a score representing whether the internal
     // boundary falls on logical boundaries
     // Scores range from 6 (best) to 0 (worst)
+    #[inline]
     fn cleanup_semantic_score(one: &[u8], two: &[u8]) -> u8 {
         let (char1, char2) = if let (Some(&char1), Some(&char2)) = (one.last(), two.first()) {
             (char1 as char, char2 as char)
@@ -1126,6 +1135,7 @@ impl DiffMatchPatch {
 
     // Reorder and merge like edit sections.  Merge equalities.
     // Any edit section can move as long as it doesn't cross an equality.
+    #[inline]
     fn cleanup_merge<T: BisectSplit>(diffs: &mut Vec<Diff<T>>) {
         // Push a dummy diff ... this triggers the equality as a last step
         diffs.push(Diff::equal(&[]));
@@ -1144,14 +1154,12 @@ impl DiffMatchPatch {
             match diffs[pointer].op() {
                 Ops::Insert => {
                     insert_n += 1;
-                    let mut data = diffs[pointer].data().to_vec();
-                    insert_data.append(&mut data);
+                    insert_data = [&insert_data[..], diffs[pointer].data()].concat();
                     pointer += 1;
                 }
                 Ops::Delete => {
                     delete_n += 1;
-                    let mut data = diffs[pointer].data().to_vec();
-                    delete_data.append(&mut data);
+                    delete_data = [&delete_data[..], diffs[pointer].data()].concat();
                     pointer += 1;
                 }
                 Ops::Equal => {
@@ -1164,8 +1172,7 @@ impl DiffMatchPatch {
                             if commonlen != 0 {
                                 let tmpidx = pointer - delete_n - insert_n;
                                 if tmpidx > 0 && diffs[tmpidx - 1].op() == Ops::Equal {
-                                    let mut appenddata = insert_data[..commonlen].to_vec();
-                                    diffs[tmpidx - 1].1.append(&mut appenddata);
+                                    diffs[tmpidx - 1].1 = [&diffs[tmpidx - 1].1[..], &insert_data[..commonlen]].concat();
                                 } else {
                                     diffs.insert(0, Diff::equal(&insert_data[..commonlen]));
                                     pointer += 1;
@@ -1179,8 +1186,8 @@ impl DiffMatchPatch {
                                 Self::common_prefix(&insert_data[..], &delete_data[..], true);
                             if commonlen > 0 {
                                 diffs[pointer].1 = [
-                                    insert_data[insert_data.len() - commonlen..].to_vec(),
-                                    diffs[pointer].data().to_vec(),
+                                    &insert_data[insert_data.len() - commonlen..],
+                                    diffs[pointer].data(),
                                 ]
                                 .concat();
                                 insert_data = insert_data[..insert_data.len() - commonlen].to_vec();
@@ -1213,9 +1220,8 @@ impl DiffMatchPatch {
 
                         pointer += 1;
                     } else if pointer != 0 && diffs[pointer - 1].op() == Ops::Equal {
-                        // Merge this equality with the previous one.
-                        let mut to_merge = diffs[pointer].data().to_vec();
-                        diffs[pointer - 1].1.append(&mut to_merge);
+                        // Merge this equality with the previous one.;
+                        diffs[pointer - 1].1 = [&diffs[pointer - 1].1[..], diffs[pointer].data()].concat();
                         diffs.remove(pointer);
 
                         difflen = diffs.len();
@@ -1253,8 +1259,8 @@ impl DiffMatchPatch {
             ) {
                 // This is a single edit surrounded by equalities.
                 if diff_prev.op() == Ops::Equal && diff_next.op() == Ops::Equal {
-                    let substr_idx = if diff.data().len() >= diff_prev.data().len() {
-                        diff.data().len() - diff_prev.data().len()
+                    let substr_idx = if diff.size() >= diff_prev.size() {
+                        diff.size() - diff_prev.size()
                     } else {
                         0
                     };
@@ -1262,7 +1268,7 @@ impl DiffMatchPatch {
                         // Shift the edit over the previous equality.
                         let new_current_data = [
                             diff_prev.data(),
-                            &diff.data()[..diff.data().len() - diff_prev.data().len()],
+                            &diff.data()[..diff.size() - diff_prev.size()],
                         ]
                         .concat();
                         let new_next_data = [diff_prev.data(), diff_next.data()].concat();
@@ -1273,18 +1279,16 @@ impl DiffMatchPatch {
                         difflen = diffs.len();
 
                         changes = true;
-                    } else if &diff.data()[..if diff_next.data().len() <= diff.data().len() {
-                        diff_next.data().len()
+                    } else if &diff.data()[..if diff_next.size() <= diff.size() {
+                        diff_next.size()
                     } else {
-                        diff.data().len()
+                        diff.size()
                     }] == diff_next.data()
                     {
                         // Shift the edit over the next equality.
-                        let mut next_data = diffs[pointer + 1].data().to_vec();
-
-                        diffs[pointer - 1].1.append(&mut next_data);
+                        diffs[pointer - 1].1 = [&diffs[pointer - 1].1[..], diffs[pointer + 1].data()].concat();
                         diffs[pointer].1 = [
-                            &diffs[pointer].data()[diffs[pointer + 1].data().len()..],
+                            &diffs[pointer].data()[diffs[pointer + 1].size()..],
                             diffs[pointer + 1].data(),
                         ]
                         .concat();
@@ -1319,7 +1323,7 @@ impl DiffMatchPatch {
             let diff = &diffs[idx];
             // if diff.op() == Ops::Equal {
             //     // Equality found
-            //     if diff.data().len()
+            //     if diff.size()
             // }
             idx += 1;
         }
@@ -1430,6 +1434,7 @@ impl DiffMatchPatch {
         todo!()
     }
 
+    #[inline]
     fn x_index<T: Copy + Eq + Ord>(diffs: &[Diff<T>], loc: usize) -> usize {
         let mut char1 = 0;
         let mut char2 = 0;
@@ -1442,12 +1447,12 @@ impl DiffMatchPatch {
         for diff in diffs.iter() {
             if diff.op() != Ops::Insert {
                 // Equality or deletion
-                char1 += diff.data().len();
+                char1 += diff.size();
             }
 
             if diff.op() != Ops::Delete {
                 // Equality or insertion
-                char2 += diff.data().len();
+                char2 += diff.size();
             }
 
             if char1 > loc {
@@ -1502,6 +1507,7 @@ impl DiffMatchPatch {
     // Look through the patches and break up any which are longer than the maximum
     // limit of the match algorithm.
     // Intended to be called only from within patch_apply.
+    #[inline]
     fn split_max(&self, patches: &mut Patches) {
         let max_bit = self.match_max_bits();
         let patch_margin = self.patch_margin() as usize;
@@ -1536,8 +1542,8 @@ impl DiffMatchPatch {
                 while !bigpatch.diffs.is_empty() && patch.length1 < max_bit - patch_margin {
                     if bigpatch.diffs[0].op() == Ops::Insert {
                         // Insertions are harmless.
-                        patch.length2 += bigpatch.diffs[0].data().len();
-                        start2 += bigpatch.diffs[0].data().len();
+                        patch.length2 += bigpatch.diffs[0].size();
+                        start2 += bigpatch.diffs[0].size();
                         let d = bigpatch.diffs.remove(0);
                         patch.diffs.push(d);
                         empty = false;
@@ -1545,11 +1551,11 @@ impl DiffMatchPatch {
                     } else if bigpatch.diffs[0].op() == Ops::Delete
                         && patch.diffs.len() == 1
                         && patch.diffs[0].op() == Ops::Equal
-                        && bigpatch.diffs[0].data().len() > 2 * max_bit
+                        && bigpatch.diffs[0].size() > 2 * max_bit
                     {
                         // This is a large deletion.  Let it pass in one chunk.
-                        patch.length1 += bigpatch.diffs[0].data().len();
-                        start1 += bigpatch.diffs[0].data().len();
+                        patch.length1 += bigpatch.diffs[0].size();
+                        start1 += bigpatch.diffs[0].size();
                         empty = false;
                         patch
                             .diffs
@@ -1558,10 +1564,7 @@ impl DiffMatchPatch {
                     } else {
                         // Deletion or equality.  Only take as much as we can stomach.
                         let diff_text = bigpatch.diffs[0].data()[..bigpatch.diffs[0]
-                            .data()
-                            .len()
-                            .min(max_bit - patch.length1 - patch_margin)]
-                            .to_vec();
+                            .size().min(max_bit - patch.length1 - patch_margin)].to_vec();
                         patch.length1 += diff_text.len();
                         start1 += diff_text.len();
 
@@ -1609,7 +1612,7 @@ impl DiffMatchPatch {
 
                     let other = if let Some(pd) = patch.diffs.last_mut() {
                         if pd.op() == Ops::Equal {
-                            pd.1.append(&mut postcontext);
+                            pd.1 = [&pd.1, &postcontext[..]].concat();
                             false
                         } else {
                             true
@@ -1645,6 +1648,7 @@ struct LineToChars<'a> {
 }
 
 impl DiffMatchPatch {
+    #[inline]
     fn lines_to_chars<'a>(old: &'a [u8], new: &'a [u8]) -> LineToChars<'a> {
         let mut lines: Vec<&'a [u8]> = vec![];
         let mut linehash: HashMap<&'a [u8], usize> = HashMap::new();
@@ -1666,6 +1670,7 @@ impl DiffMatchPatch {
         }
     }
 
+    #[inline]
     fn lines_to_chars_internal<'a>(
         text: &'a [u8],
         array: &mut Vec<&'a [u8]>,
@@ -1711,11 +1716,10 @@ impl DiffMatchPatch {
             // upcasting should never fail
             charlist.push(*e);
         }
-
-        // charlist.iter().collect::<String>().as_bytes().to_vec()
         charlist
     }
 
+    #[inline]
     fn chars_to_lines(diffs: &[Diff<usize>], lines: &[&[u8]]) -> Vec<Diff<u8>> {
         diffs
             .iter()
@@ -1730,12 +1734,10 @@ impl DiffMatchPatch {
                     .concat();
 
                 Diff::new(d.op(), &t)
-                // let d = Diff::new(d.op(), vec!)
             })
             .collect::<Vec<_>>()
 
-        // Ok(())
-        // todo!()
+        // res
     }
 }
 
@@ -1773,7 +1775,7 @@ impl DiffMatchPatch {
 
         // Highest score beyond which we give up.
         let mut score_thres = self.match_threshold();
-
+        
         // Is there a nearby exact match? (speedup)
         if let Some(best_loc) = text
             .windows(pattern.len())
@@ -2087,32 +2089,32 @@ impl DiffMatchPatch {
 
             match diff.op() {
                 Ops::Insert => {
-                    patch.length2 += diff.data().len();
+                    patch.length2 += diff.size();
                     postpatch =
                         [&postpatch[..char_n2], diff.data(), &postpatch[char_n2..]].concat();
                     patch.diffs.push(diff.clone());
                 }
                 Ops::Delete => {
-                    patch.length1 += diff.data().len();
+                    patch.length1 += diff.size();
                     postpatch = [
                         &postpatch[..char_n2],
-                        &postpatch[char_n2 + diff.data().len()..],
+                        &postpatch[char_n2 + diff.size()..],
                     ]
                     .concat();
 
                     patch.diffs.push(diff.clone());
                 }
                 Ops::Equal => {
-                    if diff.data().len() <= 2 * patch_margin
+                    if diff.size() <= 2 * patch_margin
                         && !patch.diffs.is_empty()
                         && diffs.len() != idx + 1
                     {
                         // Small equality inside a patch.
-                        patch.length1 += diff.data().len();
-                        patch.length2 += diff.data().len();
+                        patch.length1 += diff.size();
+                        patch.length2 += diff.size();
 
                         patch.diffs.push(diff.clone());
-                    } else if diff.data().len() >= 2 * patch_margin && !patch.diffs.is_empty() {
+                    } else if diff.size() >= 2 * patch_margin && !patch.diffs.is_empty() {
                         // Time for a new patch.
                         self.patch_add_context(&mut patch, &prepatch);
                         patches.push(patch.clone());
@@ -2129,10 +2131,10 @@ impl DiffMatchPatch {
             }
 
             if diff.op() != Ops::Insert {
-                char_n1 += diff.data().len();
+                char_n1 += diff.size();
             }
             if diff.op() != Ops::Delete {
-                char_n2 += diff.data().len();
+                char_n2 += diff.size();
             }
         });
 
@@ -2317,14 +2319,14 @@ impl DiffMatchPatch {
                                     source = [
                                         &source[..sl + idx2],
                                         &source[sl
-                                            + Self::x_index(&diffs, idx1 + diff.data().len())..],
+                                            + Self::x_index(&diffs, idx1 + diff.size())..],
                                     ]
                                     .concat();
                                 }
                             }
 
                             if diff.op() != Ops::Delete {
-                                idx1 += diff.data().len()
+                                idx1 += diff.size()
                             }
                         });
                     }
@@ -2358,7 +2360,7 @@ impl DiffMatchPatch {
         // Add some padding on start of first diff.
         if let Some(first_patch) = patches.first_mut() {
             let (add_null_pad, pad_len_gt_txt_len) = if let Some(fd) = first_patch.diffs.first() {
-                (fd.op() != Ops::Equal, pad_len > fd.data().len())
+                (fd.op() != Ops::Equal, pad_len > fd.size())
             } else {
                 (true, false)
             };
@@ -2372,8 +2374,8 @@ impl DiffMatchPatch {
             } else if pad_len_gt_txt_len {
                 // Grow first equality.
                 if let Some(fd) = first_patch.diffs.first_mut() {
-                    let extra_len = pad_len - fd.data().len();
-                    fd.1 = [&null_pad[fd.data().len()..], fd.data()].concat();
+                    let extra_len = pad_len - fd.size();
+                    fd.1 = [&null_pad[fd.size()..], fd.data()].concat();
                     first_patch.start1 -= extra_len;
                     first_patch.start2 -= extra_len;
                     first_patch.length1 += extra_len;
@@ -2385,7 +2387,7 @@ impl DiffMatchPatch {
         // Add some padding on end of last diff.
         if let Some(last_patch) = patches.last_mut() {
             let (add_null_pad, pad_len_gt_txt_len) = if let Some(ld) = last_patch.diffs.last() {
-                (ld.op() != Ops::Equal, pad_len > ld.data().len())
+                (ld.op() != Ops::Equal, pad_len > ld.size())
             } else {
                 (true, false)
             };
@@ -2398,9 +2400,8 @@ impl DiffMatchPatch {
             } else if pad_len_gt_txt_len {
                 // Grow last equality.
                 if let Some(ld) = last_patch.diffs.last_mut() {
-                    let extra_len = pad_len - ld.data().len();
-                    let mut padd = null_pad[..extra_len].to_vec();
-                    ld.1.append(&mut padd);
+                    let extra_len = pad_len - ld.size();
+                    ld.1 = [&ld.1[..], &null_pad[..extra_len]].concat();
 
                     last_patch.length1 += extra_len;
                     last_patch.length2 += extra_len;
@@ -2453,8 +2454,8 @@ impl DiffMatchPatch {
 
         diffs.iter().for_each(|diff| {
             match diff.op() {
-                Ops::Insert => insert += diff.data().len(),
-                Ops::Delete => delete += diff.data().len(),
+                Ops::Insert => insert += diff.size(),
+                Ops::Delete => delete += diff.size(),
                 Ops::Equal => {
                     // A deletion and an insertion is one substitution.
                     levenshtein += insert.max(delete);
@@ -2972,9 +2973,9 @@ mod tests {
         // Convert chars up to lines.
         let d1 = [0_usize, 1, 0].to_vec();
         let d2 = [1_usize, 0, 1].to_vec();
-        let diffs = [Diff::equal(&d1), Diff::insert(&d2)];
+        let mut diffs = [Diff::equal(&d1), Diff::insert(&d2)];
 
-        let diffs = DiffMatchPatch::chars_to_lines(&diffs, &[b"alpha\n", b"beta\n"]);
+        let diffs = DiffMatchPatch::chars_to_lines(&mut diffs, &[b"alpha\n", b"beta\n"]);
 
         assert_eq!(
             vec![
@@ -2991,8 +2992,8 @@ mod tests {
         let linestr = (0..TLIMIT).map(|i| format!("{i}\n")).collect::<Vec<_>>();
         let linelist: Vec<&[u8]> = (0..TLIMIT).map(|i| linestr[i].as_bytes()).collect();
 
-        let diffs = [Diff::delete(&charlist)];
-        let diffs = DiffMatchPatch::chars_to_lines(&diffs, &linelist[..]);
+        let mut diffs = [Diff::delete(&charlist)];
+        let diffs = DiffMatchPatch::chars_to_lines(&mut diffs, &linelist[..]);
 
         assert_eq!(vec![Diff::delete(linestr.join("").as_bytes())], diffs);
 
@@ -3002,8 +3003,8 @@ mod tests {
         let lines = linestr.join("");
         let l2c = DiffMatchPatch::lines_to_chars(lines.as_bytes(), b"");
 
-        let diffs = [Diff::insert(&l2c.chars_old)];
-        let diffs = DiffMatchPatch::chars_to_lines(&diffs, &l2c.lines);
+        let mut diffs = [Diff::insert(&l2c.chars_old)];
+        let diffs = DiffMatchPatch::chars_to_lines(&mut diffs, &l2c.lines);
 
         assert_eq!(lines.as_bytes(), diffs[0].data());
     }
