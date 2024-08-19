@@ -2,7 +2,7 @@ use core::str;
 use std::{char, collections::HashMap, fmt::Display};
 
 #[cfg(target_arch = "wasm32")]
-use instant::{instant::Instant, Duration};
+use instant::{Instant, Duration};
 
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::{Duration, Instant};
