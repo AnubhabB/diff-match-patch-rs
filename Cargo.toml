@@ -15,6 +15,9 @@ percent-encoding = "2"
 serde            = { version = "1", features = ["derive"], optional = true }
 serde_repr       = { version = "0", optional = true }
 
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+instant = "0"
+
 [features]
 serde = ["dep:serde", "dep:serde_repr"]
 default = ["serde"]
@@ -35,9 +38,9 @@ harness = false
 name = "diff"
 harness = false
 
-[[bench]]
-name = "bisect"
-harness = false
+# [[bench]]
+# name = "bisect"
+# harness = false
 
 # [profile.bench]
 # debug = true
