@@ -3,8 +3,8 @@ use std::{char, collections::HashMap, fmt::Display};
 
 use chrono::{NaiveTime, TimeDelta, Utc};
 use percent_encoding::{percent_decode, percent_encode, CONTROLS};
-#[cfg(feature = "serde")]
-use serde::{Deserialize, Serialize};
+// #[cfg(feature = "serde")]
+// use serde::{Deserialize, Serialize};
 #[cfg(feature = "serde")]
 use serde_repr::{Deserialize_repr, Serialize_repr};
 
@@ -20,30 +20,91 @@ pub enum Ops {
     Equal,
 }
 
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub(crate) enum Source {
+    Old,
+    New
+}
+
+impl Source {
+    pub(crate) fn other(&self) -> Self {
+        match self {
+            Source::New => Source::Old,
+            Source::Old => Source::New
+        }
+    }
+}
+
+pub(crate) struct DiffIndex {
+    op: Ops,
+    src: Source,
+    index: usize,
+    len: usize
+}
+
+impl DiffIndex {
+    pub(crate) fn new(op: Ops, src: Source, index: usize, len: usize) -> Self {
+        Self {
+            op, src, index, len
+        }
+    }
+
+    /// helper functions to create ops
+    pub(crate) fn delete(src: Source, index: usize, len: usize) -> Self {
+        Self::new(Ops::Delete, src, index, len)
+    }
+
+    pub(crate) fn insert(src: Source, index: usize, len: usize) -> Self {
+        Self::new(Ops::Insert, src, index, len)
+    }
+
+    pub(crate) fn equal(src: Source, index: usize, len: usize) -> Self {
+        Self::new(Ops::Equal, src, index, len)
+    }
+
+    // returns the operation of the current diff
+    pub(crate) fn op(&self) -> Ops {
+        self.op
+    }
+
+    // returns the bytes of the data
+    pub(crate) fn index(&self) -> usize {
+        self.index
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.len
+    }
+
+    pub(crate) fn src(&self) -> Source {
+        self.src
+    }
+}
+
 /// A structure representing a diff
 /// (Ops::Delete, String::new("Hello")) means delete `Hello`
 /// (Ops::Insert, String::new("Goodbye")) means add `Goodbye`
 /// (Ops::Equal, String::new("World")) means keep world
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub struct Diff<T: Copy + Ord + Eq>(Ops, Vec<T>);
+// #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct Diff<'a, T: Copy + Ord + Eq>(Ops, &'a [T]);
 
-impl<T: Copy + Ord + Eq> Diff<T> {
+impl<'a, T: Copy + Ord + Eq> Diff<'a, T> {
     /// Create a new diff object
-    pub fn new(op: Ops, data: &[T]) -> Self {
-        Self(op, data.to_vec())
+    pub fn new(op: Ops, data: &'a [T]) -> Self {
+        Self(op, data)
     }
 
     /// helper functions to create ops
-    pub fn delete(data: &[T]) -> Self {
+    pub fn delete(data: &'a [T]) -> Self {
         Self::new(Ops::Delete, data)
     }
 
-    pub fn insert(data: &[T]) -> Self {
+    pub fn insert(data: &'a [T]) -> Self {
         Self::new(Ops::Insert, data)
     }
 
-    pub fn equal(data: &[T]) -> Self {
+    pub fn equal(data: &'a [T]) -> Self {
         Self::new(Ops::Equal, data)
     }
 
@@ -105,10 +166,15 @@ impl Default for DiffMatchPatch {
 #[derive(Debug, PartialEq, Eq)]
 struct HalfMatch<'a, T: Copy + Ord + Eq> {
     prefix_long: &'a [T],
+    prefix_long_idx: usize,
     suffix_long: &'a [T],
+    suffix_long_idx: usize,
     prefix_short: &'a [T],
+    prefix_short_idx: usize,
     suffix_short: &'a [T],
+    suffix_short_idx: usize,
     common: &'a [T],
+    common_idx: usize
 }
 
 impl DiffMatchPatch {
@@ -148,25 +214,29 @@ impl DiffMatchPatch {
     pub(crate) fn diff_internal<'a>(
         &self,
         old_bytes: &'a [u8],
+        old_bytes_idx: usize,
+        old_src: Source,
         new_bytes: &'a [u8],
+        new_bytes_idx: usize,
+        new_src: Source,
         linemode: bool,
         start: NaiveTime,
-    ) -> Result<Vec<Diff<u8>>, crate::errors::Error> {
+    ) -> Result<Vec<DiffIndex>, crate::errors::Error> {
         // First, check if lhs and rhs are equal
         if old_bytes == new_bytes {
             if old_bytes.is_empty() {
                 return Ok(Vec::new());
             }
 
-            return Ok(vec![Diff::equal(old_bytes)]);
+            return Ok(vec![DiffIndex::equal(old_src, old_bytes_idx, old_bytes.len())]);
         }
 
         if old_bytes.is_empty() {
-            return Ok(vec![Diff::insert(new_bytes)]);
+            return Ok(vec![DiffIndex::insert(new_src, new_bytes_idx, new_bytes.len())]);
         }
 
         if new_bytes.is_empty() {
-            return Ok(vec![Diff::delete(old_bytes)]);
+            return Ok(vec![DiffIndex::insert(old_src, old_bytes_idx, old_bytes.len())]);
         }
 
         // Trim common prefix
@@ -177,28 +247,27 @@ impl DiffMatchPatch {
             true,
         );
 
-        let mut diffs = self.compute(
+        // Restore the prefix
+        let mut diffs = if common_prefix > 0 { vec![DiffIndex::equal(Source::Old, old_bytes_idx, common_prefix)] } else { Vec::new() };
+        diffs.append(&mut self.compute(
             &old_bytes[common_prefix..old_bytes.len() - common_suffix],
+            old_bytes_idx + common_prefix,
+            old_src,
             &new_bytes[common_prefix..new_bytes.len() - common_suffix],
+            new_bytes_idx + common_prefix,
+            new_src,
             linemode,
             start,
-        )?;
+        )?);
 
-        // Restore the prefix and suffix.
-        if common_prefix > 0 {
-            let mut d = vec![Diff::equal(&old_bytes[..common_prefix])];
-            d.append(&mut diffs);
-            diffs = d;
-        }
-
+        // restore suffix.
         if common_suffix > 0 {
-            diffs.push(Diff::new(
-                Ops::Equal,
-                &new_bytes[new_bytes.len() - common_suffix..],
-            ));
+            diffs.push(DiffIndex::equal(Source::New, new_bytes.len() - common_suffix + new_bytes_idx, new_bytes.len() - common_suffix));
         }
 
-        Self::cleanup_merge(&mut diffs);
+        // TODO
+        todo!();
+        // Self::cleanup_merge(diffs);
 
         Ok(diffs)
     }
@@ -206,50 +275,67 @@ impl DiffMatchPatch {
     fn compute<'a>(
         &self,
         old: &'a [u8],
+        old_idx: usize,
+        old_src: Source,
         new: &'a [u8],
+        new_idx: usize,
+        new_src: Source,
         linemode: bool,
         start: NaiveTime,
-    ) -> Result<Vec<Diff<u8>>, crate::errors::Error> {
+    ) -> Result<Vec<DiffIndex>, crate::errors::Error> {
         // returning all of the new part
         if old.is_empty() {
-            return Ok(vec![Diff::insert(new)]);
+            // diffs.push(Diff::insert(new));
+            return Ok(vec![DiffIndex::insert(new_src, new_idx, new.len())]);
         }
 
         // return everything deleted
         if new.is_empty() {
-            return Ok(vec![Diff::delete(old)]);
+            // diffs.push(Diff::delete(old));
+            return Ok(vec![DiffIndex::delete(old_src, old_idx, old.len())]);
         }
 
-        let (long, short, old_gt_new) = if old.len() > new.len() {
-            (old, new, true)
-        } else {
-            (new, old, false)
-        };
-
-        // found a subsequence which contains the short text
-        if let Some(idx) = long
-            .windows(short.len())
-            .step_by(1)
-            .position(|k| k == short)
         {
-            // Shorter text is inside the longer text (speedup).
-            let op = if old_gt_new { Ops::Delete } else { Ops::Insert };
-            let diffs = vec![
-                Diff::new(op, &long[0..idx]),
-                Diff::equal(short),
-                Diff::new(op, &long[idx + short.len()..]),
-            ];
+            let (long, short, old_gt_new) = if old.len() > new.len() {
+                (old, new, true)
+            } else {
+                (new, old, false)
+            };
 
-            return Ok(diffs);
-        }
+            // found a subsequence which contains the short text
+            if let Some(idx) = long
+                .windows(short.len())
+                .step_by(1)
+                .position(|k| k == short)
+            {
+                // Shorter text is inside the longer text (speedup).
+                let (op, long_src, long_index, short_src, short_index) = if old_gt_new {
+                    (Ops::Delete, old_src, old_idx, new_src, new_idx)
+                } else {
+                    (Ops::Insert, new_src, new_idx, old_src, old_idx)
+                };
 
-        if short.len() == 1 {
-            // After previous case, this can't be an equality
-            return Ok(vec![Diff::delete(old), Diff::insert(new)]);
+                return Ok(vec![
+                    DiffIndex::new(op, long_src, long_index, idx),
+                    DiffIndex::equal(short_src, short_index, short.len()),
+                    DiffIndex::new(op, long_src, long_index + idx + short.len(), long.len() - idx + short.len())
+                ]);
+            }
+
+            if short.len() == 1 {
+                // After previous case, this can't be an equality
+
+                return Ok(
+                    vec![
+                        DiffIndex::delete(old_src, old_idx, old.len()),
+                        DiffIndex::insert(new_src, new_idx, new.len())
+                    ]
+                )
+            }
         }
 
         // Check if the problem can be split in two
-        if let Some(half_match) = self.half_match(old, new) {
+        if let Some(half_match) = self.half_match(old, old_idx, old_src, new, new_idx, new_src) {
             let old_a = half_match.prefix_long;
             let old_b = half_match.suffix_long;
 
@@ -259,18 +345,35 @@ impl DiffMatchPatch {
             let mid_common = half_match.common;
 
             // Send both pairs off for separate processing.
-            let mut diffs_a = match self.diff_internal(old_a, new_a, linemode, start) {
-                Ok(d) => d,
-                Err(_) => return Err(crate::errors::Error::Utf8Error),
-            };
-            let mut diffs_b = match self.diff_internal(old_b, new_b, linemode, start) {
+            // self.diff_internal(old_a, new_a, linemode, diffs, start)?;
+            // diffs.push(Diff::equal(mid_common));
+            // self.diff_internal(old_b, new_b, linemode, diffs, start)?;
+            let mut diffs_a = match self.diff_internal(
+                half_match.prefix_long,
+                half_match.prefix_long_idx,
+                old_src,
+                half_match.prefix_short,
+                half_match.prefix_short_idx,
+                new_src,
+                linemode,
+                start
+            ) {
                 Ok(d) => d,
                 Err(_) => return Err(crate::errors::Error::Utf8Error),
             };
 
+            diffs_a.append(&mut self.diff_internal(
+                half_match.suffix_long,
+                // old_bytes, old_bytes_idx, old_src, new_bytes, new_bytes_idx, new_src, linemode, start)
+            )?;
+            // let mut diffs_b = match self.diff_internal(old_b, new_b, linemode, start) {
+            //     Ok(d) => d,
+            //     Err(_) => return Err(crate::errors::Error::Utf8Error),
+            // };
+
             // Merge the results
-            diffs_a.push(Diff::equal(mid_common));
-            diffs_a.append(&mut diffs_b);
+            // diffs_a.push(Diff::equal(mid_common));
+            // diffs_a.append(&mut diffs_b);
 
             return Ok(diffs_a);
         }
@@ -288,15 +391,19 @@ impl DiffMatchPatch {
     fn half_match<'a, T: Copy + Ord + Eq>(
         &self,
         old: &'a [T],
+        old_idx: usize,
+        old_src: Source,
         new: &'a [T],
+        new_idx: usize,
+        new_src: Source
     ) -> Option<HalfMatch<'a, T>> {
         // Don't risk returning a suboptimal diff when we have unlimited time
         self.timeout()?;
 
-        let (long, short) = if old.len() > new.len() {
-            (old, new)
+        let (long, long_src, long_idx, short, short_src, short_idx) = if old.len() > new.len() {
+            (old, old_src, old_idx, new, new_src, new_idx)
         } else {
-            (new, old)
+            (new, new_src, new_idx, old, old_src, old_idx)
         };
 
         // pointless - two small for this algo
@@ -305,11 +412,10 @@ impl DiffMatchPatch {
         }
 
         // First check if the second quarter is the seed for a half-match.
-        // let hm1 = Self::diff_half_match_i(long, short, (long.len() as f32 / 4.).ceil() as usize);
-        let hm1 = Self::half_match_i(long, short, long.len() / 4);
+        let hm1 = Self::half_match_i(long, long_idx, short, short_idx, long.len() / 4);
+
         // Check again based on the third quarter.
-        // let hm2 = Self::diff_half_match_i(long, short, (long.len() as f32 / 2.).ceil() as usize);
-        let hm2 = Self::half_match_i(long, short, long.len() / 2);
+        let hm2 = Self::half_match_i(long, long_idx, short, short_idx, long.len() / 2);
 
         if hm1.is_none() && hm2.is_none() {
             return None;
@@ -334,18 +440,28 @@ impl DiffMatchPatch {
         let half_match = if old.len() > new.len() {
             HalfMatch {
                 prefix_long: hm.prefix_long,
+                prefix_long_idx: hm.prefix_long_idx,
                 suffix_long: hm.suffix_long,
+                suffix_long_idx: hm.suffix_long_idx,
                 prefix_short: hm.prefix_short,
+                prefix_short_idx: hm.prefix_short_idx,
                 suffix_short: hm.suffix_short,
+                suffix_short_idx: hm.suffix_short_idx,
                 common: hm.common,
+                common_idx: hm.common_idx
             }
         } else {
             HalfMatch {
                 prefix_long: hm.prefix_short,
+                prefix_long_idx: hm.prefix_short_idx,
                 suffix_long: hm.suffix_short,
+                suffix_long_idx: hm.suffix_short_idx,
                 prefix_short: hm.prefix_long,
+                prefix_short_idx: hm.prefix_long_idx,
                 suffix_short: hm.suffix_long,
+                suffix_short_idx: hm.suffix_long_idx,
                 common: hm.common,
+                common_idx: hm.common_idx
             }
         };
 
@@ -358,9 +474,11 @@ impl DiffMatchPatch {
         &self,
         old: &'a [u8],
         new: &'a [u8],
+        diffs: &'a mut Diff<'a, u8>,
         start: NaiveTime,
-    ) -> Result<Vec<Diff<u8>>, crate::errors::Error> {
-        let mut diffs = {
+    ) -> Result<(), crate::errors::Error> {
+        // let mut diffs = 
+        {
             let to_chars = Self::lines_to_chars(old, new);
             let diffs = self.diff_lines(&to_chars.chars_old[..], &to_chars.chars_new[..], start)?;
             // Convert diffs back to text
@@ -368,7 +486,7 @@ impl DiffMatchPatch {
         };
 
         // Eliminate freak matches
-        Self::cleanup_semantic(&mut diffs);
+        Self::cleanup_semantic(diffs);
 
         // Rediff any replacement blocks, this time character-by-character.
 
@@ -706,7 +824,9 @@ impl DiffMatchPatch {
     #[inline]
     fn half_match_i<'a, T: Copy + Ord + Eq>(
         long: &'a [T],
+        long_idx: usize,
         short: &'a [T],
+        short_idx: usize,
         idx: usize,
     ) -> Option<HalfMatch<'a, T>> {
         // Start with a 1/4 length substring at position i as a seed.
@@ -721,6 +841,14 @@ impl DiffMatchPatch {
         let mut best_short_a: &[T] = &[];
         let mut best_short_b: &[T] = &[];
 
+        let mut common_idx = 0;
+
+        let mut prefix_long_idx = 0;
+        let mut suffix_long_idx = 0;
+
+        let mut prefix_short_idx = 0;
+        let mut suffix_short_idx = 0;
+
         while let Some(pos) = &short[j..]
             .windows(seedleen)
             .step_by(1)
@@ -733,12 +861,17 @@ impl DiffMatchPatch {
 
             if best_common.len() < suffix_len + prefix_len {
                 best_common = &short[j - suffix_len..j + prefix_len];
+                common_idx = short_idx + j - suffix_len;
 
                 best_long_a = &long[..idx - suffix_len];
+                prefix_long_idx = long_idx;
                 best_long_b = &long[idx + prefix_len..];
+                suffix_long_idx = long_idx + idx + prefix_len;
 
                 best_short_a = &short[..j - suffix_len];
+                prefix_short_idx = short_idx;
                 best_short_b = &short[j + prefix_len..];
+                suffix_short_idx = short_idx + j + prefix_len;
             }
 
             j += 1;
@@ -747,10 +880,15 @@ impl DiffMatchPatch {
         if best_common.len() * 2 >= long.len() {
             Some(HalfMatch {
                 prefix_long: best_long_a,
+                prefix_long_idx,
                 suffix_long: best_long_b,
+                suffix_long_idx,
                 prefix_short: best_short_a,
+                prefix_short_idx,
                 suffix_short: best_short_b,
+                suffix_short_idx,
                 common: best_common,
+                common_idx
             })
         } else {
             None
@@ -854,7 +992,7 @@ impl DiffMatchPatch {
 
     // Reduce the number of edits by eliminating semantically trivial equalities
     #[inline]
-    fn cleanup_semantic(diffs: &mut Vec<Diff<u8>>) {
+    fn cleanup_semantic<'a>(diffs: &'a mut Vec<Diff<'a, u8>>) {
         let mut changes = false;
 
         let mut pointer = 0_usize;
@@ -896,7 +1034,7 @@ impl DiffMatchPatch {
 
                 // Eliminate an equality that is smaller or equal to the edits on both
                 // sides of it.
-                if let Some(last_eq) = &last_equality {
+                if let Some(last_eq) = last_equality {
                     if last_eq.len() <= insert_len_pre.max(delete_len_pre)
                         && last_eq.len() <= insert_len_post.max(delete_len_post)
                     {
@@ -969,8 +1107,8 @@ impl DiffMatchPatch {
                 {
                     // Overlap found.  Insert an equality and trim the surrounding edits.
                     diffs.insert(pointer, Diff::equal(&insert[..overlap_1]));
-                    diffs[pointer - 1].1 = delete[..delete.len() - overlap_1].to_vec();
-                    diffs[pointer + 1].1 = insert[overlap_1..].to_vec();
+                    diffs[pointer - 1].1 = &delete[..delete.len() - overlap_1];
+                    diffs[pointer + 1].1 = &insert[overlap_1..];
                     difflen = diffs.len();
                     pointer += 1;
                 } else if overlap_2 >= delete_thres || overlap_2 >= insert_thres {
