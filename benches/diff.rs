@@ -10,8 +10,15 @@ fn diff_main(c: &mut Criterion) {
 
     let dmp = DiffMatchPatch::default();
 
-    c.bench_function("diff-match-patch", |bencher| {
-        bencher.iter(|| dmp.diff_main(&old, &new).unwrap());
+    let oldchars = old.chars().collect::<Vec<_>>();
+    let newchars = new.chars().collect::<Vec<_>>();
+
+    c.bench_function("diff-match-patch-chars", |bencher| {
+        bencher.iter(|| dmp.diff_main(&oldchars, &newchars).unwrap());
+    });
+
+    c.bench_function("diff-match-patch-bytes", |bencher| {
+        bencher.iter(|| dmp.diff_main(old.as_bytes(), new.as_bytes()).unwrap());
     });
 }
 
