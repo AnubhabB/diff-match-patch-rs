@@ -36,9 +36,9 @@ harness = false
 name = "diff"
 harness = false
 
-# [[bench]]
-# name = "bisect"
-# harness = false
+[[bench]]
+name = "bisect"
+harness = false
 
 # [profile.bench]
 # debug = true

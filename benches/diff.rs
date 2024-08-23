@@ -9,7 +9,7 @@ fn diff_main(c: &mut Criterion) {
     let new = std::fs::read_to_string(basedir.join("txt_new.txt")).unwrap();
 
     let dmp = DiffMatchPatch::default();
-
+    
     c.bench_function("diff-match-patch", |bencher| {
         bencher.iter(|| dmp.diff_main(&old, &new).unwrap());
     });
