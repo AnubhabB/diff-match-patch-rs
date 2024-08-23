@@ -132,9 +132,8 @@ impl DiffMatchPatch {
     // creates a deadline from the given timeout
     fn deadline(&self) -> Option<NaiveTime> {
         self.timeout()
-            .and_then(|t|
-                Utc::now().checked_add_signed(TimeDelta::milliseconds(t))
-            ).map(|t| t.time())
+            .and_then(|t| Utc::now().checked_add_signed(TimeDelta::milliseconds(t)))
+            .map(|t| t.time())
     }
 
     // returns configured match_threshold
@@ -382,7 +381,8 @@ impl DiffMatchPatch {
     ) -> Result<Vec<Diff<u8>>, crate::errors::Error> {
         let mut diffs = {
             let to_chars = Self::lines_to_chars(old, new);
-            let diffs = self.diff_lines(&to_chars.chars_old[..], &to_chars.chars_new[..], deadline)?;
+            let diffs =
+                self.diff_lines(&to_chars.chars_old[..], &to_chars.chars_new[..], deadline)?;
             // Convert diffs back to text
             Self::chars_to_lines(&diffs[..], &to_chars.lines[..])
         };
@@ -584,15 +584,17 @@ impl DiffMatchPatch {
         new: &'a [T],
         deadline: Option<NaiveTime>,
     ) -> Result<Vec<Diff<T>>, crate::errors::Error> {
-        let old_len = old.len() as i32;
-        let new_len = new.len() as i32;
+        // let text1_length = old.len() as isize;
+        // let text2_length = new.len() as isize;
+        let old_len = old.len() as isize;
+        let new_len = new.len() as isize;
 
         let max_d = (old_len + new_len + 1) / 2;
         let v_offset = max_d;
         let v_len = 2 * max_d;
 
-        let mut v1 = vec![-1_i32; v_len as usize];
-        let mut v2 = vec![-1_i32; v_len as usize];
+        let mut v1 = vec![-1_isize; v_len as usize];
+        let mut v2 = vec![-1_isize; v_len as usize];
 
         v1[v_offset as usize + 1] = 0;
         v2[v_offset as usize + 1] = 0;
@@ -600,14 +602,14 @@ impl DiffMatchPatch {
         let delta = old_len - new_len;
         // If the total number of characters is odd, then the front path will collide
         // with the reverse path.
-        let front = delta & 1 != 0;
+        let front = delta % 2 != 0;
 
         // Offsets for start and end of k loop.
         // Prevents mapping of space beyond the grid.
-        let mut k1start = 0;
-        let mut k1end = 0;
-        let mut k2start = 0;
-        let mut k2end = 0;
+        let mut k1start: isize = 0;
+        let mut k1end: isize = 0;
+        let mut k2start: isize = 0;
+        let mut k2end: isize = 0;
 
         for d in 0..max_d {
             // Bail out if deadline is reached.
@@ -617,41 +619,47 @@ impl DiffMatchPatch {
                 }
             }
 
-            // Walk the front path one step
-            for k1 in (k1start - d..d - k1end + 1).step_by(2) {
-
+            // Walk the front path one step.
+            let mut k1 = -d + k1start;
+            while k1 < d + 1 - k1end {
                 let (x1, y1) = {
-                    let k1_offset = (v_offset + k1) as usize;
-                    let mut x1 = if k1 == -d || (k1 != d && v1[k1_offset - 1] < v1[k1_offset + 1]) {
-                        v1[k1_offset + 1]
+                    let k1_offset = v_offset + k1;
+                    let mut x1 = if k1 == -d
+                        || (k1 != d && v1[k1_offset as usize - 1] < v1[k1_offset as usize + 1])
+                    {
+                        v1[k1_offset as usize + 1]
                     } else {
-                        v1[k1_offset - 1] + 1
+                        v1[k1_offset as usize - 1] + 1
                     };
 
                     let mut y1 = x1 - k1;
-                    while x1 < old_len && y1 < new_len && old[x1 as usize] == new[y1 as usize] {
+                    while x1 < old_len && y1 < new_len {
+                        let i1 = if x1 < 0 { old_len + x1 } else { x1 };
+                        let i2 = if y1 < 0 { new_len + y1 } else { y1 };
+                        if old[i1 as usize] != new[i2 as usize] {
+                            break;
+                        }
                         x1 += 1;
                         y1 += 1;
                     }
-
-                    v1[k1_offset] = x1;
+                    v1[k1_offset as usize] = x1;
 
                     (x1, y1)
                 };
 
                 if x1 > old_len {
-                    // ran off the right of the graph
+                    // Ran off the right of the graph.
                     k1end += 2;
                 } else if y1 > new_len {
-                    // Ran of the bottom of the graph
+                    // Ran off the bottom of the graph.
                     k1start += 2;
                 } else if front {
                     let k2_offset = v_offset + delta - k1;
                     if k2_offset >= 0 && k2_offset < v_len && v2[k2_offset as usize] != -1 {
-                        // Mirror x2 onto top-left coodinate system
+                        // Mirror x2 onto top-left coordinate system.
                         let x2 = old_len - v2[k2_offset as usize];
                         if x1 >= x2 {
-                            // Overlap detected
+                            // Overlap detected.
                             return T::bisect_split(
                                 self,
                                 old,
@@ -663,49 +671,61 @@ impl DiffMatchPatch {
                         }
                     }
                 }
+                k1 += 2;
             }
 
-            // Walk the reverse path one step
-            for k2 in (k2start - d..d - k2end + 1).step_by(2) {
+            // Walk the reverse path one step.
+            let mut k2 = -d + k2start;
+            while k2 < d + 1 - k2end {
                 let (mut x2, y2) = {
-                    let k2_offset = (v_offset + k2) as usize;
-                    let mut x2 = if k2 == -d || (k2 != d && v2[k2_offset - 1] < v2[k2_offset + 1]) {
-                        v2[k2_offset + 1]
+                    let k2_offset = v_offset + k2;
+
+                    let mut x2 = if k2 == -d
+                        || (k2 != d && v2[k2_offset as usize - 1] < v2[k2_offset as usize + 1])
+                    {
+                        v2[k2_offset as usize + 1]
                     } else {
-                        v2[k2_offset - 1] + 1
+                        v2[k2_offset as usize - 1] + 1
                     };
 
                     let mut y2 = x2 - k2;
-                    while x2 < old_len
-                        && y2 < new_len
-                        && old[(old_len - x2) as usize - 1] == new[(new_len - y2) as usize - 1]
-                    {
+                    while x2 < old_len && y2 < new_len {
+                        let i1 = if old_len - x2 > 0 {
+                            old_len - x2 - 1
+                        } else {
+                            x2 + 1
+                        };
+                        let i2 = if new_len - y2 > 0 {
+                            new_len - y2 - 1
+                        } else {
+                            y2 + 1
+                        };
+                        if old[i1 as usize] != new[i2 as usize] {
+                            break;
+                        }
                         x2 += 1;
                         y2 += 1;
                     }
-
-                    v2[k2_offset] = x2;
+                    v2[k2_offset as usize] = x2;
 
                     (x2, y2)
                 };
-                
+
                 if x2 > old_len {
-                    // Ran off the left of the graph
+                    // Ran off the left of the graph.
                     k2end += 2;
                 } else if y2 > new_len {
-                    // Ran off the top of the graph
+                    // Ran off the top of the graph.
                     k2start += 2;
                 } else if !front {
                     let k1_offset = v_offset + delta - k2;
                     if k1_offset >= 0 && k1_offset < v_len && v1[k1_offset as usize] != -1 {
                         let x1 = v1[k1_offset as usize];
                         let y1 = v_offset + x1 - k1_offset;
-
-                        // Mirror x2 onto top-left coordinate system
+                        // Mirror x2 onto top-left coordinate system.
                         x2 = old_len - x2;
                         if x1 >= x2 {
-                            // Overlap
-                            // return bisect_split(old, new, x1 as usize, y1 as usize, deadline);
+                            // Overlap detected.
                             return T::bisect_split(
                                 self,
                                 old,
@@ -717,6 +737,7 @@ impl DiffMatchPatch {
                         }
                     }
                 }
+                k2 += 2;
             }
         }
 
@@ -2445,7 +2466,12 @@ impl DiffMatchPatch {
     /// Returns:
     /// Vec of changes (Diff).
     pub fn diff_main(&self, old: &str, new: &str) -> Result<Vec<Diff<u8>>, crate::errors::Error> {
-        self.diff_internal(old.as_bytes(), new.as_bytes(), self.checklines(), self.deadline())
+        self.diff_internal(
+            old.as_bytes(),
+            new.as_bytes(),
+            self.checklines(),
+            self.deadline(),
+        )
     }
 
     ///  A diff of two unrelated texts can be filled with coincidental matches.
@@ -2515,7 +2541,7 @@ impl DiffMatchPatch {
                         } else {
                             vec![]
                         };
-                        
+
                         idx += 1;
                         continue;
                     }
@@ -3473,9 +3499,10 @@ mod tests {
 
         // Timeout.
         dmp.timeout = Some(0);
+        let deadline = dmp.deadline();
         assert_eq!(
             vec![Diff::delete(b"cat"), Diff::insert(b"map"),],
-            dmp.bisect(b"cat", b"map", dmp.deadline())?
+            dmp.bisect(b"cat", b"map", deadline)?
         );
 
         Ok(())
@@ -3725,7 +3752,7 @@ mod tests {
         // let a =  "12345678901234567890123456789 0123456 78901234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n";
         // let b = "abcdefghij abcdefghij abcdefghij abcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\n";
         // dmp.checklines = false;
-        // // 
+        // //
         // let res_no_lm = dmp.diff_main(a, b)?;
         // // let no_lm = Instant::now() - start;
         // dmp.checklines = true;

@@ -20,7 +20,7 @@ impl BisectSplit for u8 {
         new: &[u8],
         x: usize,
         y: usize,
-        deadline: Option<NaiveTime>
+        deadline: Option<NaiveTime>,
     ) -> Result<Vec<Diff<u8>>, crate::errors::Error> {
         let old_a = &old[..x];
         let new_a = &new[..y];

@@ -13,12 +13,12 @@ categories = ["algorithms", "text-synchronization"]
 [dependencies]
 chrono           = "0"
 percent-encoding = "2"
-serde            = { version = "1", features = ["derive"], optional = true }
-serde_repr       = { version = "0", optional = true }
+# serde            = { version = "1", features = ["derive"], optional = true }
+# serde_repr       = { version = "0", optional = true }
 
-[features]
-serde = ["dep:serde", "dep:serde_repr"]
-default = ["serde"]
+# [features]
+# serde = ["dep:serde", "dep:serde_repr"]
+# default = ["serde"]
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu", "wasm32-unknown-unknown"]
@@ -26,19 +26,17 @@ rustdoc-args = ["--generate-link-to-definition"]
 
 [dev-dependencies]
 criterion = "0"
-serde_json = "1"
-
-[[bench]]
-name = "prefix"
-harness = false
+# serde_json = "1"
+# diff_match_patch = "0.1.1"
+# diffmatchpatch = "0.0.4"
 
 [[bench]]
 name = "diff"
 harness = false
 
-[[bench]]
-name = "bisect"
-harness = false
+# [[bench]]
+# name = "bisect"
+# harness = false
 
 # [profile.bench]
 # debug = true
