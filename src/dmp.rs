@@ -3,10 +3,6 @@ use std::{char, collections::HashMap, fmt::Display};
 
 use chrono::{NaiveTime, TimeDelta, Utc};
 use percent_encoding::{percent_decode, percent_encode, AsciiSet, CONTROLS};
-// #[cfg(feature = "serde")]
-// use serde::{Deserialize, Serialize};
-// #[cfg(feature = "serde")]
-// use serde_repr::{Deserialize_repr, Serialize_repr};
 
 use crate::{errors::Error, traits::BisectSplit};
 
@@ -27,8 +23,6 @@ pub const ENCODE_SET: &AsciiSet = &CONTROLS
 
 /// Enum representing the different ops of diff
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
-// #[cfg_attr(feature = "serde", derive(Serialize_repr, Deserialize_repr))]
-#[repr(i8)]
 pub enum Ops {
     Delete = -1,
     Insert,
@@ -40,7 +34,6 @@ pub enum Ops {
 /// (Ops::Insert, String::new("Goodbye")) means add `Goodbye`
 /// (Ops::Equal, String::new("World")) means keep world
 #[derive(Debug, Clone, PartialEq, Eq)]
-// #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Diff<T: Copy + Ord + Eq>(Ops, Vec<T>);
 
 impl Display for Diff<u8> {
@@ -1672,6 +1665,7 @@ impl DiffMatchPatch {
         last_char2 + (loc - last_char1)
     }
 
+    #[inline]
     pub fn diff_text_old(diffs: &[Diff<u8>]) -> Vec<u8> {
         diffs
             .iter()
@@ -1686,6 +1680,7 @@ impl DiffMatchPatch {
             .concat()
     }
 
+    
     pub fn diff_text_new(diffs: &[Diff<u8>]) -> Vec<u8> {
         diffs
             .iter()
