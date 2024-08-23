@@ -1,10 +1,10 @@
-use std::{collections::HashMap, time::Instant};
+use std::time::Instant;
 
 use chrono::Utc;
 
 use diff_match_patch_rs::dmp::Diff;
 
-use diff_match_patch_rs::{DiffMatchPatch, Error, Ops, Patch, PatchInput};
+use diff_match_patch_rs::{DiffMatchPatch, Error, Ops, PatchInput};
 
 // const tests = [
 //     'testDiffIsDestructurable',
@@ -339,7 +339,7 @@ fn test_diff_main() -> Result<(), Error> {
     let mut dmp = DiffMatchPatch::default();
     let old = std::fs::read_to_string("testdata/txt_old.txt").unwrap();
     let new = std::fs::read_to_string("testdata/txt_new.txt").unwrap();
-    
+
     let start = Instant::now();
     let diff_yes_lm = dmp.diff_main(&old, &new);
     let yes_lm_dur = Instant::now() - start;
@@ -350,8 +350,9 @@ fn test_diff_main() -> Result<(), Error> {
     let diff_no_lm = dmp.diff_main(&old, &new);
     let no_lm_dur = Instant::now() - start;
     assert!(diff_no_lm.is_ok());
-    
+
     assert!(no_lm_dur > yes_lm_dur);
+
     Ok(())
 }
 
@@ -368,27 +369,24 @@ fn test_diff_delta() -> Result<(), Error> {
         Diff::insert(b"old dog"),
     ];
     let txt_old = "jumps over the lazy".as_bytes();
-    assert_eq!(
-        txt_old,
-        DiffMatchPatch::diff_text_old(&diffs)
-    );
+    assert_eq!(txt_old, DiffMatchPatch::diff_text_old(&diffs));
 
     let delta = DiffMatchPatch::to_delta(&diffs);
     assert_eq!("=4\t-1\t+ed\t=6\t-3\t+a\t=5\t+old dog".as_bytes(), &delta);
     // Convert delta string into a diff.
     assert_eq!(diffs, DiffMatchPatch::from_delta(txt_old, &delta)?);
-    
+
     // Generates error (19 != 20).
     assert!(DiffMatchPatch::from_delta(&[txt_old, "+".as_bytes()].concat()[..], &delta).is_err());
-    
+
     // Generates error (19 != 18).
     assert!(DiffMatchPatch::from_delta(&txt_old[1..], &delta).is_err());
-    
+
     // Test deltas with special characters.
     let diffs = vec![
         Diff::equal("\u{0680} \x00 \t %".as_bytes()),
         Diff::delete("\u{0681} \x01 \n ^".as_bytes()),
-        Diff::insert("\u{0682} \x02 \\ |".as_bytes())
+        Diff::insert("\u{0682} \x02 \\ |".as_bytes()),
     ];
     let txt_old = DiffMatchPatch::diff_text_old(&diffs);
     assert_eq!("\u{0680} \x00 \t %\u{0681} \x01 \n ^".as_bytes(), txt_old);
@@ -399,14 +397,20 @@ fn test_diff_delta() -> Result<(), Error> {
     assert_eq!(&diffs, &DiffMatchPatch::from_delta(&txt_old, &delta)?);
 
     // Verify pool of unchanged characters.
-    let diffs = vec![
-        Diff::insert("A-Z a-z 0-9 - _ . ! ~ * ' ( ) ; / ? : @ & = + $ , # ".as_bytes())
-    ];
+    let diffs = vec![Diff::insert(
+        "A-Z a-z 0-9 - _ . ! ~ * ' ( ) ; / ? : @ & = + $ , # ".as_bytes(),
+    )];
     let txt_new = DiffMatchPatch::diff_text_new(&diffs);
-    assert_eq!("A-Z a-z 0-9 - _ . ! ~ * \' ( ) ; / ? : @ & = + $ , # ", std::str::from_utf8(&txt_new).unwrap());
+    assert_eq!(
+        "A-Z a-z 0-9 - _ . ! ~ * \' ( ) ; / ? : @ & = + $ , # ",
+        std::str::from_utf8(&txt_new).unwrap()
+    );
 
     let delta = DiffMatchPatch::to_delta(&diffs);
-    assert_eq!("+A-Z a-z 0-9 - _ . ! ~ * \' ( ) ; / ? : @ & = + $ , # ", std::str::from_utf8(&delta).unwrap());
+    assert_eq!(
+        "+A-Z a-z 0-9 - _ . ! ~ * \' ( ) ; / ? : @ & = + $ , # ",
+        std::str::from_utf8(&delta).unwrap()
+    );
 
     // Convert delta string into a diff.
     assert_eq!(diffs, DiffMatchPatch::from_delta("".as_bytes(), &delta)?);
@@ -441,12 +445,7 @@ fn test_patch_from_text() -> Result<(), Error> {
     assert!(dmp.patch_from_text("")?.is_empty());
 
     let strp = "@@ -21,18 +22,17 @@\n jump\n-s\n+ed\n  over \n-the\n+a\n %0Alaz\n";
-    assert_eq!(
-        strp,
-        dmp.patch_from_text(
-            strp
-        )?[0].to_string()
-    );
+    assert_eq!(strp, dmp.patch_from_text(strp)?[0].to_string());
 
     assert_eq!(
         "@@ -1 +1 @@\n-a\n+b\n",
@@ -515,7 +514,7 @@ fn test_patch_make() -> Result<(), Error> {
         "`1234567890-=[]\\;',./",
         "~!@#$%^&*()_+{}|:\"<>?",
     ))?;
-    
+
     assert_eq!(
         "@@ -1,21 +1,21 @@\n-%601234567890-=%5B%5D%5C;',./\n+~!@#$%25%5E&*()_+%7B%7D%7C:%22%3C%3E?\n",
         dmp.patch_to_text(&patches)
@@ -565,17 +564,13 @@ fn test_diff_text() {
     );
 }
 
-
 #[test]
 fn test_patch_apply() -> Result<(), Error> {
     let mut dmp = DiffMatchPatch::default();
 
     let patches = dmp.patch_make(PatchInput::Texts("", ""))?;
-    let (txt, results) = dmp.patch_apply_internal(&patches, b"Hello world.")?;
-    assert_eq!(
-        format!("{}\t{}", std::str::from_utf8(&txt).unwrap(), results.len()),
-        "Hello world.\t0"
-    );
+    let (txt, results) = dmp.patch_apply(&patches, "Hello world.")?;
+    assert_eq!(format!("{}\t{}", txt, results.len()), "Hello world.\t0");
 
     let patches = dmp.patch_make(PatchInput::Texts(
         "The quick brown fox jumps over the lazy dog.",
@@ -585,31 +580,28 @@ fn test_patch_apply() -> Result<(), Error> {
     // Exact match
     assert_eq!(
         (
-            b"That quick brown fox jumped over a lazy dog.".to_vec(),
+            "That quick brown fox jumped over a lazy dog.".to_string(),
             vec![true, true]
         ),
-        dmp.patch_apply_internal(&patches, b"The quick brown fox jumps over the lazy dog.")?
+        dmp.patch_apply(&patches, "The quick brown fox jumps over the lazy dog.")?
     );
 
     // Partial match
     assert_eq!(
         (
-            b"That quick red rabbit jumped over a tired tiger.".to_vec(),
+            "That quick red rabbit jumped over a tired tiger.".to_string(),
             vec![true, true]
         ),
-        dmp.patch_apply_internal(
-            &patches,
-            b"The quick red rabbit jumps over the tired tiger."
-        )?
+        dmp.patch_apply(&patches, "The quick red rabbit jumps over the tired tiger.")?
     );
 
     // Failed match
     assert_eq!(
         (
-            b"I am the very model of a modern major general.".to_vec(),
+            "I am the very model of a modern major general.".to_string(),
             vec![false, false]
         ),
-        dmp.patch_apply_internal(&patches, b"I am the very model of a modern major general.")?
+        dmp.patch_apply(&patches, "I am the very model of a modern major general.")?
     );
 
     // Big delete, small change
@@ -617,47 +609,70 @@ fn test_patch_apply() -> Result<(), Error> {
         "x1234567890123456789012345678901234567890123456789012345678901234567890y",
         "xabcy",
     ))?;
-    assert_eq!((b"xabcy".to_vec(), vec![true, true]), dmp.patch_apply_internal(&patches, b"x123456789012345678901234567890-----++++++++++-----123456789012345678901234567890y")?);
+    assert_eq!(
+        ("xabcy".to_string(), vec![true, true]),
+        dmp.patch_apply(
+            &patches,
+            "x123456789012345678901234567890-----++++++++++-----123456789012345678901234567890y"
+        )?
+    );
 
     // Big delete, large change
     let patches = dmp.patch_make(PatchInput::Texts(
         "x1234567890123456789012345678901234567890123456789012345678901234567890y",
         "xabcy",
     ))?;
-    assert_eq!((b"xabc12345678901234567890---------------++++++++++---------------12345678901234567890y".to_vec(), vec![false, true]), dmp.patch_apply_internal(&patches, b"x12345678901234567890---------------++++++++++---------------12345678901234567890y")?);
+    assert_eq!(
+        (
+            "xabc12345678901234567890---------------++++++++++---------------12345678901234567890y"
+                .to_string(),
+            vec![false, true]
+        ),
+        dmp.patch_apply(
+            &patches,
+            "x12345678901234567890---------------++++++++++---------------12345678901234567890y"
+        )?
+    );
 
-    dmp.delete_threshold = 0.6;
+    dmp.set_delete_threshold(0.6);
     let patches = dmp.patch_make(PatchInput::Texts(
         "x1234567890123456789012345678901234567890123456789012345678901234567890y",
         "xabcy",
     ))?;
-    assert_eq!((b"xabcy".to_vec(), vec![true, true]), dmp.patch_apply_internal(&patches, b"x12345678901234567890---------------++++++++++---------------12345678901234567890y")?);
-    dmp.delete_threshold = 0.5;
+    assert_eq!(
+        ("xabcy".to_string(), vec![true, true]),
+        dmp.patch_apply(
+            &patches,
+            "x12345678901234567890---------------++++++++++---------------12345678901234567890y"
+        )?
+    );
+    dmp.set_delete_threshold(0.5);
 
     // Compesate for failed patch
-    dmp.match_threshold = 0.;
-    dmp.match_distance = 0;
+    dmp.set_match_threshold(0.);
+    dmp.set_match_distance(0);
     let patches = dmp.patch_make(PatchInput::Texts(
         "abcdefghijklmnopqrstuvwxyz--------------------1234567890",
         "abcXXXXXXXXXXdefghijklmnopqrstuvwxyz--------------------1234567YYYYYYYYYY890",
     ))?;
     assert_eq!(
         (
-            b"ABCDEFGHIJKLMNOPQRSTUVWXYZ--------------------1234567YYYYYYYYYY890".to_vec(),
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZ--------------------1234567YYYYYYYYYY890".to_string(),
             vec![false, true]
         ),
-        dmp.patch_apply_internal(
+        dmp.patch_apply(
             &patches,
-            b"ABCDEFGHIJKLMNOPQRSTUVWXYZ--------------------1234567890"
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZ--------------------1234567890"
         )?
     );
-    dmp.match_threshold = 0.5;
-    dmp.match_distance = 1000;
+
+    dmp.set_match_threshold(0.5);
+    dmp.set_match_distance(1000);
 
     // No side-effects - kinds useless cos patches is not mutable in rust
     let patches = dmp.patch_make(PatchInput::Texts("", "test"))?;
     let srcstr = dmp.patch_to_text(&patches);
-    dmp.patch_apply_internal(&patches, b"")?;
+    dmp.patch_apply(&patches, "")?;
     assert_eq!(srcstr, dmp.patch_to_text(&patches));
 
     let patches = dmp.patch_make(PatchInput::Texts(
@@ -665,102 +680,31 @@ fn test_patch_apply() -> Result<(), Error> {
         "Woof",
     ))?;
     let srcstr = dmp.patch_to_text(&patches);
-    dmp.patch_apply_internal(&patches, b"The quick brown fox jumps over the lazy dog.")?;
+    dmp.patch_apply(&patches, "The quick brown fox jumps over the lazy dog.")?;
     assert_eq!(srcstr, dmp.patch_to_text(&patches));
 
     // Edge exact match
     let patches = dmp.patch_make(PatchInput::Texts("", "test"))?;
     assert_eq!(
-        (b"test".to_vec(), vec![true]),
-        dmp.patch_apply_internal(&patches, b"")?
+        ("test".to_string(), vec![true]),
+        dmp.patch_apply(&patches, "")?
     );
 
     // Near edge exact match
     let patches = dmp.patch_make(PatchInput::Texts("XY", "XtestY"))?;
     assert_eq!(
-        (b"XtestY".to_vec(), vec![true]),
-        dmp.patch_apply_internal(&patches, b"XY")?
+        ("XtestY".to_string(), vec![true]),
+        dmp.patch_apply(&patches, "XY")?
     );
 
     // Edge partial match
     let patches = dmp.patch_make(PatchInput::Texts("y", "y123"))?;
     assert_eq!(
-        (b"x123".to_vec(), vec![true]),
-        dmp.patch_apply_internal(&patches, b"x")?
+        ("x123".to_string(), vec![true]),
+        dmp.patch_apply(&patches, "x")?
     );
 
     Ok(())
-}
-
-#[test]
-fn test_match_alphabet() {
-    // Initialise the bitmasks for Bitap.
-    // Unique.
-    assert_eq!(
-        HashMap::from([(b'a', 4), (b'b', 2), (b'c', 1)]),
-        DiffMatchPatch::match_alphabet(b"abc")
-    );
-
-    // Duplicates.
-    assert_eq!(
-        HashMap::from([(b'a', 37), (b'b', 18), (b'c', 8)]),
-        DiffMatchPatch::match_alphabet(b"abcaba")
-    )
-}
-
-#[test]
-fn test_match_bitap() {
-    // Bitap algorithm.
-    let mut dmp = DiffMatchPatch {
-        match_distance: 100,
-        ..Default::default()
-    };
-
-    // Exact matches.
-    assert_eq!(Some(5), dmp.match_bitap(b"abcdefghijk", b"fgh", 5));
-    assert_eq!(Some(5), dmp.match_bitap(b"abcdefghijk", b"fgh", 0));
-
-    // Fuzzy matches.
-    assert_eq!(Some(4), dmp.match_bitap(b"abcdefghijk", b"efxhi", 0));
-    assert_eq!(Some(2), dmp.match_bitap(b"abcdefghijk", b"cdefxyhijk", 5));
-    assert_eq!(None, dmp.match_bitap(b"abcdefghijk", b"bxy", 1));
-
-    // Overflow.
-    assert_eq!(Some(2), dmp.match_bitap(b"123456789xx0", b"3456789x0", 2));
-
-    // Threshold test.
-    dmp.match_threshold = 0.4;
-    assert_eq!(Some(4), dmp.match_bitap(b"abcdefghijk", b"efxyhi", 1));
-
-    // dmp.`match_threshold` = 0.3;
-    dmp.match_threshold = 0.3;
-    assert_eq!(None, dmp.match_bitap(b"abcdefghijk", b"efxyhi", 1));
-
-    dmp.match_threshold = 0.;
-    assert_eq!(Some(1), dmp.match_bitap(b"abcdefghijk", b"bcdef", 1));
-
-    dmp.match_threshold = 0.5;
-
-    // Multiple select.
-    assert_eq!(Some(0), dmp.match_bitap(b"abcdexyzabcde", b"abccde", 3));
-    assert_eq!(Some(8), dmp.match_bitap(b"abcdexyzabcde", b"abccde", 5));
-
-    // Distance test.
-    dmp.match_distance = 10;
-    assert_eq!(
-        None,
-        dmp.match_bitap(b"abcdefghijklmnopqrstuvwxyz", b"abcdefg", 24)
-    );
-    assert_eq!(
-        Some(0),
-        dmp.match_bitap(b"abcdefghijklmnopqrstuvwxyz", b"abcdxxefg", 1)
-    );
-
-    dmp.match_distance = 1000;
-    assert_eq!(
-        Some(0),
-        dmp.match_bitap(b"abcdefghijklmnopqrstuvwxyz", b"abcdefg", 24)
-    );
 }
 
 #[test]
@@ -768,23 +712,23 @@ fn test_match_main() {
     let dmp = DiffMatchPatch::default();
     // Full match.
     // Shortcut matches.
-    assert_eq!(Some(0), dmp.match_internal(b"abcdef", b"abcdef", 1000));
-    assert_eq!(None, dmp.match_internal(b"", b"abcdef", 1));
-    assert_eq!(Some(3), dmp.match_internal(b"abcdef", b"", 3));
-    assert_eq!(Some(3), dmp.match_internal(b"abcdef", b"de", 3));
+    assert_eq!(Some(0), dmp.match_main("abcdef", "abcdef", 1000));
+    assert_eq!(None, dmp.match_main("", "abcdef", 1));
+    assert_eq!(Some(3), dmp.match_main("abcdef", "", 3));
+    assert_eq!(Some(3), dmp.match_main("abcdef", "de", 3));
 
     // Beyond end match.
-    assert_eq!(Some(3), dmp.match_internal(b"abcdef", b"defy", 4));
+    assert_eq!(Some(3), dmp.match_main("abcdef", "defy", 4));
 
     // Oversized pattern.
-    assert_eq!(Some(0), dmp.match_internal(b"abcdef", b"abcdefy", 0));
+    assert_eq!(Some(0), dmp.match_main("abcdef", "abcdefy", 0));
 
     // Complex match.
     assert_eq!(
         Some(4),
-        dmp.match_internal(
-            b"I am the very model of a modern major general.",
-            b" that berry ",
+        dmp.match_main(
+            "I am the very model of a modern major general.",
+            " that berry ",
             5
         )
     );

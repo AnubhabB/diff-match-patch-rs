@@ -45,7 +45,12 @@ pub struct Diff<T: Copy + Ord + Eq>(Ops, Vec<T>);
 
 impl Display for Diff<u8> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "({:?}, {})", self.op(), std::str::from_utf8(self.data()).unwrap())
+        write!(
+            f,
+            "({:?}, {})",
+            self.op(),
+            std::str::from_utf8(self.data()).unwrap()
+        )
     }
 }
 
@@ -139,7 +144,7 @@ impl DiffMatchPatch {
 
     /// Enables or disables `line mode` optimization.
     /// When enabled, the diff algorithm tries to find the `lines` that have changes and apply diff on the same
-    /// 
+    ///
     /// This optimization makes sense for text with many lines (~100s), defaults to `true`
     pub fn set_checklines(&mut self, checklines: bool) {
         self.checklines = checklines;
@@ -151,9 +156,9 @@ impl DiffMatchPatch {
     }
 
     /// Set a timeout in number of `milliseconds`. This creates a cutoff for internal `recursive` function calls
-    /// 
+    ///
     /// Defaults to `1000ms` (1 second)
-    /// 
+    ///
     /// None means `infinite time`
     pub fn set_timeout(&mut self, tout: Option<u32>) {
         self.timeout = tout;
@@ -172,10 +177,10 @@ impl DiffMatchPatch {
     }
 
     /// The `match_threshold` property determines the cut-off value for a valid match.
-    /// If `match_threshold` is closer to 0, the requirements for accuracy increase. 
+    /// If `match_threshold` is closer to 0, the requirements for accuracy increase.
     /// If `match_threshold` is closer to 1 then it is more likely that a match will be found.
     /// The `match_threshold` is, the slower `match_main()` may take to compute.
-    /// 
+    ///
     /// defaults to 0.5
     pub fn set_match_threshold(&mut self, threshold: f32) {
         self.match_threshold = threshold
@@ -191,6 +196,16 @@ impl DiffMatchPatch {
         self.delete_threshold
     }
 
+    /// When deleting a large block of text (over ~64 characters), how close does
+    /// the contents have to match the expected contents. (0.0 = perfection,
+    /// 1.0 = very loose).  Note that `match_threshold` controls how closely the
+    /// end points of a delete need to match.
+    ///
+    /// Defaults to `0.5`
+    pub fn set_delete_threshold(&mut self, threshold: f32) {
+        self.delete_threshold = threshold;
+    }
+
     // returns the configured max_bits
     fn match_max_bits(&self) -> usize {
         self.match_max_bits
@@ -200,7 +215,12 @@ impl DiffMatchPatch {
         self.match_distance
     }
 
-
+    /// How far to search for a match (0 = exact location, 1000+ = broad match).
+    /// A match this many characters away from the expected location will add
+    /// 1.0 to the score (0.0 is a perfect match).
+    pub fn set_match_distance(&mut self, distance: usize) {
+        self.match_distance = distance
+    }
 
     pub(crate) fn diff_internal<'a>(
         &self,
@@ -1395,24 +1415,29 @@ impl DiffMatchPatch {
     }
 
     pub fn to_delta(diffs: &[Diff<u8>]) -> Vec<u8> {
-        let mut data = diffs.iter()
+        let mut data = diffs
+            .iter()
             .map(|diff| {
-            match diff.op() {
-                Ops::Insert => {
-                    let encoded = percent_encode(diff.data(), ENCODE_SET).map(|v| v.as_bytes()).collect::<Vec<_>>().concat();
-                    // format!("+{encoded}")
-                    ["+".as_bytes(), &encoded, "\t".as_bytes()].concat()
+                match diff.op() {
+                    Ops::Insert => {
+                        let encoded = percent_encode(diff.data(), ENCODE_SET)
+                            .map(|v| v.as_bytes())
+                            .collect::<Vec<_>>()
+                            .concat();
+                        // format!("+{encoded}")
+                        ["+".as_bytes(), &encoded, "\t".as_bytes()].concat()
+                    }
+                    Ops::Delete => {
+                        [b"-", diff.size().to_string().as_bytes(), "\t".as_bytes()].concat()
+                    }
+                    Ops::Equal => {
+                        // format!("={}", diff.size())
+                        [b"=", diff.size().to_string().as_bytes(), "\t".as_bytes()].concat()
+                    }
                 }
-                Ops::Delete => {
-                    [b"-", diff.size().to_string().as_bytes(), "\t".as_bytes()].concat()
-                }
-                Ops::Equal => {
-                    // format!("={}", diff.size())
-                    [b"=", diff.size().to_string().as_bytes(), "\t".as_bytes()].concat()
-                }
-            }
-        })
-        .collect::<Vec<_>>().concat();
+            })
+            .collect::<Vec<_>>()
+            .concat();
 
         data.pop();
 
@@ -1434,22 +1459,20 @@ impl DiffMatchPatch {
             let param = &token[1..];
 
             if opcode == Some(&b'+') {
-                
                 let param = percent_decode(param).collect::<Vec<_>>();
                 diffs.push(Diff::insert(&param));
-
             } else if opcode == Some(&b'-') || opcode == Some(&b'=') {
-                let n =  match std::str::from_utf8(param)
+                let n = match std::str::from_utf8(param)
                     .map_err(|_| crate::errors::Error::Utf8Error)
-                    .and_then(|t|
-                        t.parse::<isize>().map_err(|_| crate::errors::Error::InvalidInput
-                        )
-                    ) {
-                        Ok(n) => n,
-                        Err(_) => {
-                            return Err(crate::errors::Error::InvalidInput);
-                        }
-                    };
+                    .and_then(|t| {
+                        t.parse::<isize>()
+                            .map_err(|_| crate::errors::Error::InvalidInput)
+                    }) {
+                    Ok(n) => n,
+                    Err(_) => {
+                        return Err(crate::errors::Error::InvalidInput);
+                    }
+                };
 
                 if n < 0 {
                     return Err(crate::errors::Error::InvalidInput);
@@ -1461,7 +1484,7 @@ impl DiffMatchPatch {
                     return Err(crate::errors::Error::InvalidInput);
                 }
 
-                let txt = &old[pointer .. new_pointer];
+                let txt = &old[pointer..new_pointer];
                 pointer = new_pointer;
 
                 if opcode == Some(&b'=') {
@@ -1473,11 +1496,11 @@ impl DiffMatchPatch {
                 return Err(crate::errors::Error::InvalidInput);
             }
         }
-        
+
         if pointer != old.len() {
             return Err(crate::errors::Error::InvalidInput);
         }
-        
+
         Ok(diffs)
     }
 
@@ -2151,7 +2174,7 @@ impl Display for Patch {
             };
 
             let segment = format!("{sign}{}\n", percent_encode(diff.data(), ENCODE_SET));
-            
+
             segments.push(segment)
         });
 
@@ -2590,7 +2613,7 @@ impl DiffMatchPatch {
     /// # Example
     /// ```
     /// use diff_match_patch_rs::{DiffMatchPatch, Error};
-    /// 
+    ///
     /// # fn main() -> Result<(), Error> {
     /// let mut dmp = DiffMatchPatch::new();
     /// // change some settings, e.g. set `line mode` optimization to `false` because you know you have a small text and not many lines
@@ -2610,7 +2633,7 @@ impl DiffMatchPatch {
     /// # Example
     /// ```
     /// use diff_match_patch_rs::{DiffMatchPatch, Error};
-    /// 
+    ///
     /// # fn main() -> Result<(), Error> {
     /// let mut dmp = DiffMatchPatch::new();
     /// // change some settings, e.g. set `line mode` optimization to `false` because you know you have a small text and not many lines
@@ -2646,7 +2669,7 @@ impl DiffMatchPatch {
     /// <div class="warning">Not Implemented</div>
     /// This function is similar to diff_cleanupSemantic, except that instead of optimising a diff to be human-readable, it optimises the diff to be efficient for machine processing.
     /// The results of both cleanup types are often the same.
-    /// 
+    ///
     /// The efficiency cleanup is based on the observation that a diff made up of large numbers of small diffs edits may take longer to process (in downstream applications) or take more capacity to store or transmit than a smaller number of larger diffs.
     /// The diff_match_patch.Diff_EditCost property sets what the cost of handling a new edit is in terms of handling extra characters in an existing edit.
     /// The default value is 4, which means if expanding the length of a diff by three characters can eliminate one edit, then that optimisation will reduce the total costs.
@@ -2813,7 +2836,7 @@ impl DiffMatchPatch {
     /// Given a text to search, a pattern to search for and an expected location in the text near which to find the pattern, return the location which matches closest.
     /// The function will search for the best match based on both the number of character errors between the pattern and the potential match,
     /// as well as the distance between the expected location and the potential match.
-    /// 
+    ///
     /// The following example is a classic dilemma. There are two potential matches, one is close to the expected location but contains a one character error,
     /// the other is far from the expected location but is exactly the pattern sought after: match_main("abc12345678901234567890abbc", "abc", 26)
     /// Which result is returned (0 or 24) is determined by the diff_match_patch.match_distance property.
@@ -2821,17 +2844,16 @@ impl DiffMatchPatch {
     /// For example, a distance of '0' requires the match be at the exact location specified, whereas a threshold of '1000' would require a perfect match to be within 800
     /// characters of the expected location to be found using a 0.8 threshold (see below).
     /// The larger match_distance is, the slower match_main() may take to compute. This variable defaults to 1000.
-    /// 
+    ///
     /// Another property is `diff_match_patch.match_threshold` which determines the cut-off value for a valid match.
     /// If `match_threshold` is closer to 0, the requirements for accuracy increase.
     /// If `match_threshold` is closer to 1 then it is more likely that a match will be found.
     /// The larger `match_threshold` is, the slower match_main() may take to compute. `match_threshold` defaults to 0.5 and can be updated by `dmp.set_match_threshold()` method.
-    /// 
+    ///
     /// If no match is found, the function returns -1.
     pub fn match_main(&self, text: &str, pattern: &str, loc: usize) -> Option<usize> {
         self.match_internal(text.as_bytes(), pattern.as_bytes(), loc)
     }
-
 
     /// Given two texts, or an already computed list of differences, return an array of patch objects.
     /// The third form PatchInput::TextDiffs(...) is preferred, use it if you happen to have that data available, otherwise this function will compute the missing pieces.
@@ -2965,7 +2987,7 @@ impl DiffMatchPatch {
     /// The second element is an array of true/false values indicating which of the patches were successfully applied.
     /// [Note that this second element is not too useful since large patches may get broken up internally, resulting in a longer results list than the input with no way to figure out which patch succeeded or failed.
     /// A more informative API is in development.]
-    /// 
+    ///
     /// The `match_distance` and `match_threshold` properties are used to evaluate patch application on text which does not match exactly.
     /// In addition, the diff_match_patch.patch_delete_threshold property determines how closely the text within a major (~64 character) delete needs to match the expected text.
     /// If patch_delete_threshold is closer to 0, then the deleted text must match the expected text more closely.
@@ -2988,7 +3010,12 @@ impl DiffMatchPatch {
 
 #[cfg(test)]
 mod tests {
-    use crate::{dmp::{Diff, HalfMatch, LineToChars}, DiffMatchPatch, Error, Patch, PatchInput};
+    use std::collections::HashMap;
+
+    use crate::{
+        dmp::{Diff, HalfMatch, LineToChars},
+        DiffMatchPatch, Error, Patch, PatchInput,
+    };
 
     #[test]
     fn test_prefix() {
@@ -3736,10 +3763,7 @@ mod tests {
         let dmp = DiffMatchPatch::default();
         // Both edges full.
         let mut patches = dmp.patch_make(PatchInput::Texts("", "test"))?;
-        assert_eq!(
-            "@@ -0,0 +1,4 @@\n+test\n",
-            dmp.patch_to_text(&patches)
-        );
+        assert_eq!("@@ -0,0 +1,4 @@\n+test\n", dmp.patch_to_text(&patches));
         dmp.patch_add_padding(&mut patches);
         assert_eq!(
             "@@ -1,8 +1,12 @@\n %01%02%03%04\n+test\n %01%02%03%04\n",
@@ -3819,5 +3843,76 @@ mod tests {
         );
 
         Ok(())
+    }
+
+    #[test]
+    fn test_match_alphabet() {
+        // Initialise the bitmasks for Bitap.
+        // Unique.
+        assert_eq!(
+            HashMap::from([(b'a', 4), (b'b', 2), (b'c', 1)]),
+            DiffMatchPatch::match_alphabet(b"abc")
+        );
+
+        // Duplicates.
+        assert_eq!(
+            HashMap::from([(b'a', 37), (b'b', 18), (b'c', 8)]),
+            DiffMatchPatch::match_alphabet(b"abcaba")
+        )
+    }
+
+    #[test]
+    fn test_match_bitap() {
+        // Bitap algorithm.
+        let mut dmp = DiffMatchPatch {
+            match_distance: 100,
+            ..Default::default()
+        };
+
+        // Exact matches.
+        assert_eq!(Some(5), dmp.match_bitap(b"abcdefghijk", b"fgh", 5));
+        assert_eq!(Some(5), dmp.match_bitap(b"abcdefghijk", b"fgh", 0));
+
+        // Fuzzy matches.
+        assert_eq!(Some(4), dmp.match_bitap(b"abcdefghijk", b"efxhi", 0));
+        assert_eq!(Some(2), dmp.match_bitap(b"abcdefghijk", b"cdefxyhijk", 5));
+        assert_eq!(None, dmp.match_bitap(b"abcdefghijk", b"bxy", 1));
+
+        // Overflow.
+        assert_eq!(Some(2), dmp.match_bitap(b"123456789xx0", b"3456789x0", 2));
+
+        // Threshold test.
+        dmp.match_threshold = 0.4;
+        assert_eq!(Some(4), dmp.match_bitap(b"abcdefghijk", b"efxyhi", 1));
+
+        // dmp.`match_threshold` = 0.3;
+        dmp.match_threshold = 0.3;
+        assert_eq!(None, dmp.match_bitap(b"abcdefghijk", b"efxyhi", 1));
+
+        dmp.match_threshold = 0.;
+        assert_eq!(Some(1), dmp.match_bitap(b"abcdefghijk", b"bcdef", 1));
+
+        dmp.match_threshold = 0.5;
+
+        // Multiple select.
+        assert_eq!(Some(0), dmp.match_bitap(b"abcdexyzabcde", b"abccde", 3));
+        assert_eq!(Some(8), dmp.match_bitap(b"abcdexyzabcde", b"abccde", 5));
+
+        // Distance test.
+        dmp.match_distance = 10;
+        assert_eq!(
+            None,
+            dmp.match_bitap(b"abcdefghijklmnopqrstuvwxyz", b"abcdefg", 24)
+        );
+        assert_eq!(
+            Some(0),
+            dmp.match_bitap(b"abcdefghijklmnopqrstuvwxyz", b"abcdxxefg", 1)
+        );
+
+        dmp.match_distance = 1000;
+        assert_eq!(
+            Some(0),
+            dmp.match_bitap(b"abcdefghijklmnopqrstuvwxyz", b"abcdefg", 24)
+        );
     }
 }
