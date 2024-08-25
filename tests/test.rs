@@ -365,114 +365,114 @@ fn test_diff_main_compat() -> Result<(), Error> {
     assert!(dmp.diff_main_compat("", "")?.is_empty());
 
     // Equality
-    // assert_eq!(vec![Diff::equal(b"abc")], dmp.diff_main_compat("abc", "abc")?);
+    assert_eq!(vec![Diff::equal(&"abc".chars().collect::<Vec<_>>()[..])], dmp.diff_main_compat("abc", "abc")?);
 
-    // // Simple insert
-    // assert_eq!(
-    //     vec![Diff::equal(b"ab"), Diff::insert(b"123"), Diff::equal(b"c")],
-    //     dmp.diff_main_compat("abc", "ab123c")?
-    // );
+    // Simple insert
+    assert_eq!(
+        vec![Diff::equal(&"ab".chars().collect::<Vec<_>>()[..]), Diff::insert(&"123".chars().collect::<Vec<_>>()[..]), Diff::equal(&['c'])],
+        dmp.diff_main_compat("abc", "ab123c")?
+    );
 
-    // // Simple delete
-    // assert_eq!(
-    //     vec![Diff::equal(b"a"), Diff::delete(b"123"), Diff::equal(b"bc")],
-    //     dmp.diff_main_compat("a123bc", "abc")?
-    // );
+    // Simple delete
+    assert_eq!(
+        vec![Diff::equal(&['a']), Diff::delete(&"123".chars().collect::<Vec<_>>()[..]), Diff::equal(&['b','c'])],
+        dmp.diff_main_compat("a123bc", "abc")?
+    );
 
-    // // Two insertions
-    // assert_eq!(
-    //     vec![
-    //         Diff::equal(b"a"),
-    //         Diff::insert(b"123"),
-    //         Diff::equal(b"b"),
-    //         Diff::insert(b"456"),
-    //         Diff::equal(b"c"),
-    //     ],
-    //     dmp.diff_main_compat("abc", "a123b456c")?
-    // );
+    // Two insertions
+    assert_eq!(
+        vec![
+            Diff::equal(&['a']),
+            Diff::insert(&"123".chars().collect::<Vec<_>>()[..]),
+            Diff::equal(&['b']),
+            Diff::insert(&['4','5','6']),
+            Diff::equal(&['c']),
+        ],
+        dmp.diff_main_compat("abc", "a123b456c")?
+    );
 
-    // // Two deletions.
-    // assert_eq!(
-    //     vec![
-    //         Diff::equal(b"a"),
-    //         Diff::delete(b"123"),
-    //         Diff::equal(b"b"),
-    //         Diff::delete(b"456"),
-    //         Diff::equal(b"c"),
-    //     ],
-    //     dmp.diff_main_compat("a123b456c", "abc")?
-    // );
+    // Two deletions.
+    assert_eq!(
+        vec![
+            Diff::equal(&['a']),
+            Diff::delete(&"123".chars().collect::<Vec<_>>()[..]),
+            Diff::equal(&['b']),
+            Diff::delete(&"456".chars().collect::<Vec<_>>()[..]),
+            Diff::equal(&['c']),
+        ],
+        dmp.diff_main_compat("a123b456c", "abc")?
+    );
 
-    // // Perform a real diff.
-    // // Switch off the timeout.
-    // dmp.set_timeout(None);
-    // // Simple cases.
-    // assert_eq!(
-    //     vec![Diff::delete(b"a"), Diff::insert(b"b"),],
-    //     dmp.diff_main_compat("a", "b")?
-    // );
+    // Perform a real diff.
+    // Switch off the timeout.
+    dmp.set_timeout(None);
+    // Simple cases.
+    assert_eq!(
+        vec![Diff::delete(&['a']), Diff::insert(&['b']),],
+        dmp.diff_main_compat("a", "b")?
+    );
 
-    // assert_eq!(
-    //     vec![
-    //         Diff::delete(b"Apple"),
-    //         Diff::insert(b"Banana"),
-    //         Diff::equal(b"s are a"),
-    //         Diff::insert(b"lso"),
-    //         Diff::equal(b" fruit.")
-    //     ],
-    //     dmp.diff_main_compat("Apples are a fruit.", "Bananas are also fruit.")?
-    // );
+    assert_eq!(
+        vec![
+            Diff::delete(&"Apple".chars().collect::<Vec<_>>()[..]),
+            Diff::insert(&"Banana".chars().collect::<Vec<_>>()[..]),
+            Diff::equal(&"s are a".chars().collect::<Vec<_>>()[..]),
+            Diff::insert(&"lso".chars().collect::<Vec<_>>()[..]),
+            Diff::equal(&" fruit.".chars().collect::<Vec<_>>()[..])
+        ],
+        dmp.diff_main_compat("Apples are a fruit.", "Bananas are also fruit.")?
+    );
 
-    // assert_eq!(
-    //     vec![
-    //         Diff::delete(b"a"),
-    //         Diff::insert("\u{0680}".as_bytes()),
-    //         Diff::equal(b"x"),
-    //         Diff::delete(b"\t"),
-    //         Diff::insert(b"\0")
-    //     ],
-    //     dmp.diff_main_compat("ax\t", "\u{0680}x\0")?
-    // );
+    assert_eq!(
+        vec![
+            Diff::delete(&['a']),
+            Diff::insert(&"\u{0680}".chars().collect::<Vec<_>>()[..]),
+            Diff::equal(&['x']),
+            Diff::delete(&['\t']),
+            Diff::insert(&['\0'])
+        ],
+        dmp.diff_main_compat("ax\t", "\u{0680}x\0")?
+    );
 
-    // // Overlaps.
-    // assert_eq!(
-    //     vec![
-    //         Diff::delete(b"1"),
-    //         Diff::equal(b"a"),
-    //         Diff::delete(b"y"),
-    //         Diff::equal(b"b"),
-    //         Diff::delete(b"2"),
-    //         Diff::insert(b"xab"),
-    //     ],
-    //     dmp.diff_main_compat("1ayb2", "abxab")?
-    // );
+    // Overlaps.
+    assert_eq!(
+        vec![
+            Diff::delete(&['1']),
+            Diff::equal(&['a']),
+            Diff::delete(&['y']),
+            Diff::equal(&['b']),
+            Diff::delete(&['2']),
+            Diff::insert(&"xab".chars().collect::<Vec<_>>()[..]),
+        ],
+        dmp.diff_main_compat("1ayb2", "abxab")?
+    );
 
-    // assert_eq!(
-    //     vec![
-    //         Diff::insert(b"xaxcx"),
-    //         Diff::equal(b"abc"),
-    //         Diff::delete(b"y"),
-    //     ],
-    //     dmp.diff_main_compat("abcy", "xaxcxabc")?
-    // );
+    assert_eq!(
+        vec![
+            Diff::insert(&"xaxcx".chars().collect::<Vec<_>>()[..]),
+            Diff::equal(&"abc".chars().collect::<Vec<_>>()[..]),
+            Diff::delete(&['y']),
+        ],
+        dmp.diff_main_compat("abcy", "xaxcxabc")?
+    );
 
-    // assert_eq!(
-    //     vec![
-    //         Diff::delete(b"ABCD"),
-    //         Diff::equal(b"a"),
-    //         Diff::delete(b"="),
-    //         Diff::insert(b"-"),
-    //         Diff::equal(b"bcd"),
-    //         Diff::delete(b"="),
-    //         Diff::insert(b"-"),
-    //         Diff::equal(b"efghijklmnopqrs"),
-    //         Diff::delete(b"EFGHIJKLMNOefg"),
-    //     ],
-    //     dmp.diff_main_compat(
-    //         "ABCDa=bcd=efghijklmnopqrsEFGHIJKLMNOefg",
-    //         "a-bcd-efghijklmnopqrs"
-    //     )?
-    // );
+    assert_eq!(
+        vec![
+            Diff::delete(&"ABCD".chars().collect::<Vec<_>>()[..]),
+            Diff::equal(&"a".chars().collect::<Vec<_>>()[..]),
+            Diff::delete(&"=".chars().collect::<Vec<_>>()[..]),
+            Diff::insert(&"-".chars().collect::<Vec<_>>()[..]),
+            Diff::equal(&"bcd".chars().collect::<Vec<_>>()[..]),
+            Diff::delete(&"=".chars().collect::<Vec<_>>()[..]),
+            Diff::insert(&"-".chars().collect::<Vec<_>>()[..]),
+            Diff::equal(&"efghijklmnopqrs".chars().collect::<Vec<_>>()[..]),
+            Diff::delete(&"EFGHIJKLMNOefg".chars().collect::<Vec<_>>()[..]),
+        ],
+        dmp.diff_main_compat(
+            "ABCDa=bcd=efghijklmnopqrsEFGHIJKLMNOefg",
+            "a-bcd-efghijklmnopqrs"
+        )?
+    );
 
     // Large equality.
     assert_eq!(
