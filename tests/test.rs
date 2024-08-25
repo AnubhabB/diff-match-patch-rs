@@ -357,6 +357,204 @@ fn test_diff_main() -> Result<(), Error> {
 }
 
 #[test]
+fn test_diff_main_compat() -> Result<(), Error> {
+    let mut dmp = DiffMatchPatch::default();
+
+    // Perform a trivial diff.
+    // Null case.
+    assert!(dmp.diff_main_compat("", "")?.is_empty());
+
+    // Equality
+    // assert_eq!(vec![Diff::equal(b"abc")], dmp.diff_main_compat("abc", "abc")?);
+
+    // // Simple insert
+    // assert_eq!(
+    //     vec![Diff::equal(b"ab"), Diff::insert(b"123"), Diff::equal(b"c")],
+    //     dmp.diff_main_compat("abc", "ab123c")?
+    // );
+
+    // // Simple delete
+    // assert_eq!(
+    //     vec![Diff::equal(b"a"), Diff::delete(b"123"), Diff::equal(b"bc")],
+    //     dmp.diff_main_compat("a123bc", "abc")?
+    // );
+
+    // // Two insertions
+    // assert_eq!(
+    //     vec![
+    //         Diff::equal(b"a"),
+    //         Diff::insert(b"123"),
+    //         Diff::equal(b"b"),
+    //         Diff::insert(b"456"),
+    //         Diff::equal(b"c"),
+    //     ],
+    //     dmp.diff_main_compat("abc", "a123b456c")?
+    // );
+
+    // // Two deletions.
+    // assert_eq!(
+    //     vec![
+    //         Diff::equal(b"a"),
+    //         Diff::delete(b"123"),
+    //         Diff::equal(b"b"),
+    //         Diff::delete(b"456"),
+    //         Diff::equal(b"c"),
+    //     ],
+    //     dmp.diff_main_compat("a123b456c", "abc")?
+    // );
+
+    // // Perform a real diff.
+    // // Switch off the timeout.
+    // dmp.set_timeout(None);
+    // // Simple cases.
+    // assert_eq!(
+    //     vec![Diff::delete(b"a"), Diff::insert(b"b"),],
+    //     dmp.diff_main_compat("a", "b")?
+    // );
+
+    // assert_eq!(
+    //     vec![
+    //         Diff::delete(b"Apple"),
+    //         Diff::insert(b"Banana"),
+    //         Diff::equal(b"s are a"),
+    //         Diff::insert(b"lso"),
+    //         Diff::equal(b" fruit.")
+    //     ],
+    //     dmp.diff_main_compat("Apples are a fruit.", "Bananas are also fruit.")?
+    // );
+
+    // assert_eq!(
+    //     vec![
+    //         Diff::delete(b"a"),
+    //         Diff::insert("\u{0680}".as_bytes()),
+    //         Diff::equal(b"x"),
+    //         Diff::delete(b"\t"),
+    //         Diff::insert(b"\0")
+    //     ],
+    //     dmp.diff_main_compat("ax\t", "\u{0680}x\0")?
+    // );
+
+    // // Overlaps.
+    // assert_eq!(
+    //     vec![
+    //         Diff::delete(b"1"),
+    //         Diff::equal(b"a"),
+    //         Diff::delete(b"y"),
+    //         Diff::equal(b"b"),
+    //         Diff::delete(b"2"),
+    //         Diff::insert(b"xab"),
+    //     ],
+    //     dmp.diff_main_compat("1ayb2", "abxab")?
+    // );
+
+    // assert_eq!(
+    //     vec![
+    //         Diff::insert(b"xaxcx"),
+    //         Diff::equal(b"abc"),
+    //         Diff::delete(b"y"),
+    //     ],
+    //     dmp.diff_main_compat("abcy", "xaxcxabc")?
+    // );
+
+    // assert_eq!(
+    //     vec![
+    //         Diff::delete(b"ABCD"),
+    //         Diff::equal(b"a"),
+    //         Diff::delete(b"="),
+    //         Diff::insert(b"-"),
+    //         Diff::equal(b"bcd"),
+    //         Diff::delete(b"="),
+    //         Diff::insert(b"-"),
+    //         Diff::equal(b"efghijklmnopqrs"),
+    //         Diff::delete(b"EFGHIJKLMNOefg"),
+    //     ],
+    //     dmp.diff_main_compat(
+    //         "ABCDa=bcd=efghijklmnopqrsEFGHIJKLMNOefg",
+    //         "a-bcd-efghijklmnopqrs"
+    //     )?
+    // );
+
+    // Large equality.
+    assert_eq!(
+        vec![
+            Diff::insert(&[' ']),
+            Diff::equal(&['a']),
+            Diff::insert(&['n','d']),
+            Diff::equal(&[' ','[','[','H','e','p','a','t','o','p','a','n','c','r','e','a','t','i','c',']',']']),
+            Diff::delete(&" and [[New".chars().collect::<Vec<_>>()[..]),
+        ],
+        dmp.diff_main_compat(
+            "a [[Hepatopancreatic]] and [[New",
+            " and [[Hepatopancreatic]]"
+        )?
+    );
+
+    // Timeout.
+    const LOW_TIMEOUT: u32 = 100;
+    dmp.set_timeout(Some(LOW_TIMEOUT));
+    let a = vec!["`Twas brillig, and the slithy toves\nDid gyre and gimble in the wabe:\nAll mimsy were the borogoves,\nAnd the mome raths outgrabe.\n"; 2048].join("");
+    let b = vec!["I am the very model of a modern major general,\nI\'ve information vegetable, animal, and mineral,\nI know the kings of England, and I quote the fights historical,\nFrom Marathon to Waterloo, in order categorical.\n"; 2048].join("");
+
+    let start = Utc::now().time();
+    dmp.diff_main(&a, &b)?;
+    let end = Utc::now().time();
+    // Test that we took at least the timeout period (+ 5ms being generous).
+    assert!((end - start).num_milliseconds() <= LOW_TIMEOUT as i64 + 5);
+
+    // Test the linemode speedup.
+    // Must be long to pass the 100 char cutoff.
+    // Simple line-mode.
+    dmp.set_timeout(Some(1000));
+    let a =  "12345678901234567890123456789 0123456 78901234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n";
+    let b = "abcdefghij abcdefghij abcdefghij abcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\nabcdefghij\n";
+    dmp.set_checklines(false);
+    let res_no_lm = dmp.diff_main(a, b)?;
+    dmp.set_checklines(true);
+    let res_yes_lm = dmp.diff_main(a, b)?;
+
+    // Now, we'll run 2 checks - one for result equality
+    assert_eq!(res_no_lm, res_yes_lm);
+
+    // Single line-mode.
+    let a = "1234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890";
+    let b = "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghij";
+    dmp.set_checklines(false);
+    let yes_lm = dmp.diff_main(a, b)?;
+    dmp.set_checklines(true);
+    let no_lm = dmp.diff_main(a, b)?;
+    assert_eq!(no_lm, yes_lm);
+
+    // Overlap line-mode.
+    let a = "1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n1234567890\n";
+    let b = "abcdefghij\n1234567890\n1234567890\n1234567890\nabcdefghij\n1234567890\n1234567890\n1234567890\nabcdefghij\n1234567890\n1234567890\n1234567890\nabcdefghij\n";
+    dmp.set_checklines(false);
+    let no_lm = dmp.diff_main(a, b)?;
+    dmp.set_checklines(true);
+    let yes_lm = dmp.diff_main(a, b)?;
+    assert_eq!(rebuild_text(&yes_lm[..])?, rebuild_text(&no_lm[..])?);
+
+    // Benefits of checklines can only be realized in text with many lines
+    let mut dmp = DiffMatchPatch::default();
+    let old = std::fs::read_to_string("testdata/txt_old.txt").unwrap();
+    let new = std::fs::read_to_string("testdata/txt_new.txt").unwrap();
+
+    let start = Instant::now();
+    let diff_yes_lm = dmp.diff_main(&old, &new);
+    let yes_lm_dur = Instant::now() - start;
+    assert!(diff_yes_lm.is_ok());
+
+    dmp.set_checklines(false);
+    let start = Instant::now();
+    let diff_no_lm = dmp.diff_main(&old, &new);
+    let no_lm_dur = Instant::now() - start;
+    assert!(diff_no_lm.is_ok());
+
+    assert!(no_lm_dur > yes_lm_dur);
+
+    Ok(())
+}
+
+#[test]
 fn test_diff_delta() -> Result<(), Error> {
     let diffs = vec![
         Diff::equal(b"jump"),

@@ -4,7 +4,7 @@ use std::{char, collections::HashMap, fmt::Display};
 use chrono::{NaiveTime, TimeDelta, Utc};
 use percent_encoding::{percent_decode, percent_encode, AsciiSet, CONTROLS};
 
-use crate::{errors::Error, traits::BisectSplit};
+use crate::{errors::Error, DType};
 
 // Appending controls to ensure exact same encoding as cpp variant
 pub const ENCODE_SET: &AsciiSet = &CONTROLS
@@ -34,7 +34,7 @@ pub enum Ops {
 /// (Ops::Insert, String::new("Goodbye")) means add `Goodbye`
 /// (Ops::Equal, String::new("World")) means keep world
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Diff<T: Copy + Ord + Eq>(Ops, Vec<T>);
+pub struct Diff<T: DType>(Ops, Vec<T>);
 
 impl Display for Diff<u8> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -47,7 +47,18 @@ impl Display for Diff<u8> {
     }
 }
 
-impl<T: Copy + Ord + Eq> Diff<T> {
+impl Display for Diff<char> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "({:?}, {})",
+            self.op(),
+            self.data().iter().collect::<String>()
+        )
+    }
+}
+
+impl<T: DType> Diff<T> {
     /// Create a new diff object
     pub fn new(op: Ops, data: &[T]) -> Self {
         Self(op, data.to_vec())
@@ -89,6 +100,11 @@ pub struct DiffMatchPatch {
     checklines: bool,
     /// A default timeout in num milliseconda, defaults to 1000 (1 second)
     timeout: Option<u32>,
+    /// enable/ disable `compatibility mode`
+    /// If you are preparing `patches` that need to be compatible across other `diff-match-patch` libraries enable `compatibility` mode
+    /// Compatibility mode adds some extra overhead of preparing diffs cohereant with `char` representation instead of bytes
+    /// defaults to `false`
+    compat_mode: bool,
     /// At what point is no match declared (0.0 = perfection, 1.0 = very loose).
     match_threshold: f32,
     /// How far to search for a match (0 = exact location, 1000+ = broad match).
@@ -96,6 +112,8 @@ pub struct DiffMatchPatch {
     /// 1.0 to the score (0.0 is a perfect match).
     /// int Match_Distance;
     match_distance: usize,
+    /// The number of bits in an int.
+    match_max_bits: usize,
     /// When deleting a large block of text (over ~64 characters), how close does
     /// the contents have to match the expected contents. (0.0 = perfection,
     /// 1.0 = very loose).  Note that `match_threshold` controls how closely the
@@ -103,8 +121,6 @@ pub struct DiffMatchPatch {
     delete_threshold: f32,
     /// Chunk size for context length.
     patch_margin: u16,
-    /// The number of bits in an int.
-    match_max_bits: usize,
 }
 
 impl Default for DiffMatchPatch {
@@ -112,6 +128,7 @@ impl Default for DiffMatchPatch {
         Self {
             checklines: true,
             timeout: Some(1000),
+            compat_mode: false,
             match_threshold: 0.5,
             match_distance: 1000,
             match_max_bits: 32,
@@ -122,7 +139,7 @@ impl Default for DiffMatchPatch {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-struct HalfMatch<'a, T: Copy + Ord + Eq> {
+struct HalfMatch<'a, T: DType> {
     prefix_long: &'a [T],
     suffix_long: &'a [T],
     prefix_short: &'a [T],
@@ -215,13 +232,13 @@ impl DiffMatchPatch {
         self.match_distance = distance
     }
 
-    pub(crate) fn diff_internal<'a>(
+    pub(crate) fn diff_internal<'a, T: DType>(
         &self,
-        old_bytes: &'a [u8],
-        new_bytes: &'a [u8],
+        old_bytes: &'a [T],
+        new_bytes: &'a [T],
         linemode: bool,
         deadline: Option<NaiveTime>,
-    ) -> Result<Vec<Diff<u8>>, crate::errors::Error> {
+    ) -> Result<Vec<Diff<T>>, crate::errors::Error> {
         // First, check if lhs and rhs are equal
         if old_bytes == new_bytes {
             if old_bytes.is_empty() {
@@ -273,13 +290,13 @@ impl DiffMatchPatch {
         Ok(diffs)
     }
 
-    fn compute<'a>(
+    fn compute<'a, T: DType>(
         &self,
-        old: &'a [u8],
-        new: &'a [u8],
+        old: &'a [T],
+        new: &'a [T],
         linemode: bool,
         deadline: Option<NaiveTime>,
-    ) -> Result<Vec<Diff<u8>>, crate::errors::Error> {
+    ) -> Result<Vec<Diff<T>>, crate::errors::Error> {
         // returning all of the new part
         if old.is_empty() {
             return Ok(vec![Diff::insert(new)]);
@@ -355,7 +372,7 @@ impl DiffMatchPatch {
         }
     }
 
-    fn half_match<'a, T: Copy + Ord + Eq>(
+    fn half_match<'a, T: DType>(
         &self,
         old: &'a [T],
         new: &'a [T],
@@ -424,12 +441,12 @@ impl DiffMatchPatch {
 
     // Quick line-level diff on both strings, then rediff the parts for greater accuracy
     // This speedup can produce non-minimal diffs
-    fn line_mode<'a>(
+    fn line_mode<'a, T: DType>(
         &self,
-        old: &'a [u8],
-        new: &'a [u8],
+        old: &'a [T],
+        new: &'a [T],
         deadline: Option<NaiveTime>,
-    ) -> Result<Vec<Diff<u8>>, crate::errors::Error> {
+    ) -> Result<Vec<Diff<T>>, crate::errors::Error> {
         let mut diffs = {
             let to_chars = Self::lines_to_chars(old, new);
             let diffs =
@@ -629,7 +646,7 @@ impl DiffMatchPatch {
     // Find the 'middle snake' of a diff, split the problem in two
     // and return the recursively constructed diff.
     // See Myers 1986 paper: An O(ND) Difference Algorithm and Its Variations.
-    pub fn bisect<'a, T: BisectSplit>(
+    pub fn bisect<'a, T: DType>(
         &self,
         old: &'a [T],
         new: &'a [T],
@@ -799,7 +816,7 @@ impl DiffMatchPatch {
     // is at least half the length of longtext?
     //idx Start index of quarter length substring within longtext.
     #[inline]
-    fn half_match_i<'a, T: Copy + Ord + Eq>(
+    fn half_match_i<'a, T: DType>(
         long: &'a [T],
         short: &'a [T],
         idx: usize,
@@ -858,7 +875,7 @@ impl DiffMatchPatch {
     // Reverse prefix is suffix
     // TODO: investigate this further
     #[inline]
-    fn common_prefix<T: Copy + Ord + Eq>(lhs: &[T], rhs: &[T], reverse: bool) -> usize {
+    fn common_prefix<T: DType>(lhs: &[T], rhs: &[T], reverse: bool) -> usize {
         if lhs.is_empty()
             || rhs.is_empty()
             || (!reverse && (lhs.first() != rhs.first()))
@@ -897,7 +914,7 @@ impl DiffMatchPatch {
     }
 
     #[inline]
-    fn common_overlap(lhs: &[u8], rhs: &[u8]) -> usize {
+    fn common_overlap<T: DType>(lhs: &[T], rhs: &[T]) -> usize {
         if lhs.is_empty() || rhs.is_empty() {
             return 0;
         }
@@ -949,7 +966,7 @@ impl DiffMatchPatch {
 
     // Reduce the number of edits by eliminating semantically trivial equalities
     #[inline]
-    fn cleanup_semantic(diffs: &mut Vec<Diff<u8>>) {
+    fn cleanup_semantic<T: DType>(diffs: &mut Vec<Diff<T>>) {
         let mut changes = false;
 
         let mut pointer = 0_usize;
@@ -1087,7 +1104,7 @@ impl DiffMatchPatch {
     // Look for single edits surrounded on both sides by equalities
     // e.g: The c<ins>at c</ins>ame. -> The <ins>cat </ins>came.
     #[inline]
-    fn cleanup_semantic_lossless(diffs: &mut Vec<Diff<u8>>) {
+    fn cleanup_semantic_lossless<T: DType>(diffs: &mut Vec<Diff<T>>) {
         let mut pointer = 1_usize;
         let mut difflen = diffs.len();
 
@@ -1182,9 +1199,9 @@ impl DiffMatchPatch {
     // boundary falls on logical boundaries
     // Scores range from 6 (best) to 0 (worst)
     #[inline]
-    fn cleanup_semantic_score(one: &[u8], two: &[u8]) -> u8 {
-        let (char1, char2) = if let (Some(&char1), Some(&char2)) = (one.last(), two.first()) {
-            (char1 as char, char2 as char)
+    fn cleanup_semantic_score<T: DType>(one: &[T], two: &[T]) -> u8 {
+        let (char1, char2) = if let (Some(&char1), Some(&char2)) = (one.last(), two.first()) && let (Some(c1), Some(c2)) = (char1.as_char(), char2.as_char()) {
+            (c1, c2)
         } else {
             return 6;
         };
@@ -1201,12 +1218,8 @@ impl DiffMatchPatch {
         let linebreak_1 = whitespace_1 && (char1 == '\n' || char1 == '\r');
         let linebreak_2 = whitespace_2 && (char2 == '\n' || char2 == '\r');
 
-        let blankline_1 = linebreak_1 && (one.ends_with(b"\n\n") || (one.ends_with(b"\n\r\n")));
-        let blankline_2 = linebreak_2
-            && (two.starts_with(b"\r\n\n")
-                || two.starts_with(b"\r\n\r\n")
-                || two.starts_with(b"\n\r\n")
-                || two.starts_with(b"\n\n"));
+        let blankline_1 = linebreak_1 && T::is_linebreak_end(one);
+        let blankline_2 = linebreak_2 && T::is_linebreak_start(two);
 
         if blankline_1 || blankline_2 {
             // 5 for blank lines
@@ -1231,7 +1244,7 @@ impl DiffMatchPatch {
     // Reorder and merge like edit sections.  Merge equalities.
     // Any edit section can move as long as it doesn't cross an equality.
     #[inline]
-    fn cleanup_merge<T: BisectSplit>(diffs: &mut Vec<Diff<T>>) {
+    fn cleanup_merge<T: DType>(diffs: &mut Vec<Diff<T>>) {
         // Push a dummy diff ... this triggers the equality as a last step
         diffs.push(Diff::equal(&[]));
 
@@ -1624,7 +1637,7 @@ impl DiffMatchPatch {
     }
 
     #[inline]
-    fn x_index<T: Copy + Eq + Ord>(diffs: &[Diff<T>], loc: usize) -> usize {
+    fn x_index<T: DType>(diffs: &[Diff<T>], loc: usize) -> usize {
         let mut char1 = 0;
         let mut char2 = 0;
 
@@ -1834,17 +1847,17 @@ impl DiffMatchPatch {
 }
 
 #[derive(Debug, Eq, PartialEq)]
-struct LineToChars<'a> {
+struct LineToChars<'a, T: DType> {
     chars_old: Vec<usize>,
     chars_new: Vec<usize>,
-    lines: Vec<&'a [u8]>,
+    lines: Vec<&'a [T]>,
 }
 
 impl DiffMatchPatch {
     #[inline]
-    fn lines_to_chars<'a>(old: &'a [u8], new: &'a [u8]) -> LineToChars<'a> {
-        let mut lines: Vec<&'a [u8]> = vec![];
-        let mut linehash: HashMap<&'a [u8], usize> = HashMap::new();
+    fn lines_to_chars<'a, T: DType>(old: &'a [T], new: &'a [T]) -> LineToChars<'a, T> {
+        let mut lines: Vec<&'a [T]> = vec![];
+        let mut linehash: HashMap<&'a [T], usize> = HashMap::new();
 
         // Allocate 2/3rds of the UTF16::MAX (65535) value space for text1, the rest for text2.
         // let mut maxlines = 5;
@@ -1864,10 +1877,10 @@ impl DiffMatchPatch {
     }
 
     #[inline]
-    fn lines_to_chars_internal<'a>(
-        text: &'a [u8],
-        array: &mut Vec<&'a [u8]>,
-        hash: &mut HashMap<&'a [u8], usize>,
+    fn lines_to_chars_internal<'a, T: DType>(
+        text: &'a [T],
+        array: &mut Vec<&'a [T]>,
+        hash: &mut HashMap<&'a [T], usize>,
         maxlines: usize,
     ) -> Vec<usize> {
         let take = maxlines - array.len();
@@ -1878,7 +1891,7 @@ impl DiffMatchPatch {
         let mut broke = false;
         let mut cursor = 0;
 
-        text.split_inclusive(|u| *u == b'\n')
+        text.split_inclusive(|u| *u == T::from_char('\n'))
             .enumerate()
             .take(take)
             .for_each(|(idx, line)| {
@@ -1913,7 +1926,7 @@ impl DiffMatchPatch {
     }
 
     #[inline]
-    fn chars_to_lines(diffs: &[Diff<usize>], lines: &[&[u8]]) -> Vec<Diff<u8>> {
+    fn chars_to_lines<T: DType>(diffs: &[Diff<usize>], lines: &[&[T]]) -> Vec<Diff<T>> {
         diffs
             .iter()
             .map(|d| {
@@ -2652,6 +2665,22 @@ impl DiffMatchPatch {
             self.deadline(),
         )
     }
+
+    pub fn diff_main_compat(&self, old: &str, new: &str) -> Result<Vec<Diff<char>>, crate::errors::Error> {
+        let (old, new) = (
+            char::from_str(old),
+            char::from_str(new)
+        );
+
+        self.diff_internal(
+            &old[..],
+            &new[..],
+            self.checklines(),
+            self.deadline(),
+        )
+    }
+
+
 
     /// A diff of two unrelated texts can be filled with coincidental matches.
     /// For example, the diff of "mouse" and "sofas" is [(-1, "m"), (1, "s"), (0, "o"), (-1, "u"), (1, "fa"), (0, "s"), (-1, "e")].

@@ -11,7 +11,7 @@ fn diff_main(c: &mut Criterion) {
     let dmp = DiffMatchPatch::default();
 
     c.bench_function("diff-match-patch", |bencher| {
-        bencher.iter(|| dmp.diff_main(&old, &new).unwrap());
+        bencher.iter(|| dmp.diff_main_compat(&old, &new).unwrap());
     });
 }
 
