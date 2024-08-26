@@ -1,6 +1,6 @@
 [package]
 name = "diff-match-patch-rs"
-version = "0.1.0-beta.1"
+version = "0.1.0-beta.2"
 edition = "2021"
 authors = ["Anubhab Bandyopadhyay"]
 repository = "https://github.com/AnubhabB/diff-match-patch-rs.git"
