@@ -18,7 +18,7 @@ pub enum Ops {
 /// (Ops::Insert, String::new("Goodbye")) means add `Goodbye`
 /// (Ops::Equal, String::new("World")) means keep world
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Diff<T: DType>(Ops, Vec<T>);
+pub struct Diff<T: DType>(pub(crate) Ops, pub(crate) Vec<T>);
 
 impl Display for Diff<u8> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -1337,10 +1337,10 @@ impl DiffMatchPatch {
             }
         }
 
-        if let Some(dl) = diffs.last() {
-            if dl.data().is_empty() {
-                diffs.pop();
-            }
+        if let Some(dl) = diffs.last()
+            && dl.data().is_empty()
+        {
+            diffs.pop();
         }
 
         difflen = diffs.len();
@@ -1409,6 +1409,7 @@ impl DiffMatchPatch {
         }
     }
 
+    #[inline]
     pub fn to_delta<T: DType>(diffs: &[Diff<T>]) -> Vec<T> {
         let mut data = diffs
             .iter()
@@ -1496,6 +1497,7 @@ impl DiffMatchPatch {
     }
 
     // Reduce the number of edits by eliminating operationally trivial equalities.
+    #[inline]
     fn cleanup_efficiency<T: DType>(&self, diffs: &mut Vec<Diff<T>>) {
         if diffs.is_empty() {
             return;
@@ -1657,6 +1659,7 @@ impl DiffMatchPatch {
             .concat()
     }
 
+    #[inline]
     pub fn diff_text_new<T: DType>(diffs: &[Diff<T>]) -> Vec<T> {
         diffs
             .iter()
@@ -1935,9 +1938,10 @@ impl DiffMatchPatch {
         }
     }
 
+    #[inline]
     fn match_bitap<T: DType>(&self, text: &[T], pattern: &[T], loc: usize) -> Option<usize> {
         if pattern.len() > self.match_max_bits() {
-            todo!("Throw error");
+            return None;
         }
 
         let alphabet = Self::match_alphabet(pattern);
@@ -2061,6 +2065,7 @@ impl DiffMatchPatch {
         best_loc
     }
 
+    #[inline]
     fn match_alphabet<T: DType>(pattern: &[T]) -> HashMap<T, usize> {
         let mut map = HashMap::with_capacity(pattern.len());
 
@@ -2074,6 +2079,7 @@ impl DiffMatchPatch {
 
     // Compute and return the score for a match with e errors and x location.
     // Accesses loc and pattern through being a closure.
+    #[inline]
     fn bitap_score(&self, org_loc: usize, pattern_len: usize, errs: usize, loc: usize) -> f32 {
         let accuracy = errs as f32 / pattern_len as f32;
         let proximity = (org_loc as i32 - loc as i32).abs();
@@ -2183,6 +2189,7 @@ pub enum PatchInput<'a, T: DType> {
 pub type Patches<T> = Vec<Patch<T>>;
 
 impl DiffMatchPatch {
+    #[inline]
     fn parse_patch_header<T: DType>(
         s: &[T],
     ) -> Option<(usize, Option<usize>, usize, Option<usize>)> {
@@ -2257,6 +2264,7 @@ impl DiffMatchPatch {
         Some((old_line, old_cols, new_line, new_cols))
     }
 
+    #[inline]
     fn patch_make_internal<T: DType>(
         &self,
         txt: &[T],
@@ -2701,106 +2709,20 @@ impl DiffMatchPatch {
 
     /// Takes a diff array and returns a pretty HTML sequence. This function is mainly intended as an example from which to write ones own display functions.
     /// TODO: html config
-    pub fn diff_pretty_html(&self, diffs: &[Diff<u8>]) -> Result<String, crate::errors::Error> {
+    pub fn diff_pretty_html<T: DType>(
+        &self,
+        diffs: &[Diff<T>],
+    ) -> Result<String, crate::errors::Error> {
         let mut diffs = diffs.to_vec();
         DiffMatchPatch::cleanup_semantic(&mut diffs);
 
-        // let mut err_idx = None;
-        // let mut error_bytes = vec![];
-
-        let mut idx = 0_usize;
-        let mut err_prefix = vec![];
-
-        let mut err_start = None;
-
-        // First pass, we'll chomp of errors in the diffs?
-        // The pattern we have seen is that
-        while idx < diffs.len() {
-            let diff = &mut diffs[idx];
-
-            if let Err(e) = str::from_utf8(diff.data()) {
-                // Errors can come in 2 forms
-                // 1. error at the end of bytes - we'll keep prefixing the error bytes to all non equalities that follow
-                // 2. error at the begining of bytes - this one is tricky - we'll need to figure out the suffix at which the rest of the string is valid
-                if e.error_len().is_none() && err_start.is_none() {
-                    err_start = Some(idx);
-
-                    if diff.op() == Ops::Equal {
-                        err_prefix = diff.data()[e.valid_up_to()..].to_vec();
-                        diff.1 = if e.valid_up_to() > 0 {
-                            diff.data()[..e.valid_up_to()].to_vec()
-                        } else {
-                            vec![]
-                        };
-
-                        idx += 1;
-                        continue;
-                    }
-                }
-
-                if let Some(err_start_idx) = err_start {
-                    // For insert and delete add the prefix collected earlier (end error bytes)
-                    if diff.op() == Ops::Delete || diff.op() == Ops::Insert {
-                        diff.1 = [&err_prefix, diff.data()].concat();
-                    } else {
-                        if let Some(err_len) = e.error_len() {
-                            // Iteratively figure out at what point does the error go away if at-all
-                            let mut suffix = diff.data()[..err_len].to_vec();
-                            let mut data = diff.data()[err_len..].to_vec();
-
-                            while let Err(e) = std::str::from_utf8(&data) {
-                                if e.error_len().is_none() {
-                                    break;
-                                }
-
-                                // should never panic cos empty data is also a valid utf8
-                                let first_byte = data.remove(0);
-                                suffix.push(first_byte);
-                            }
-
-                            // here, we have a suffix to be added to all previous cases and a data that might be good string or error at the end of bytes
-                            // which is a separate cycle
-
-                            // Let's add the suffix to all the intermediate steps
-                            diff.1 = data.to_vec();
-                            diffs
-                                .iter_mut()
-                                .take(idx)
-                                .skip(err_start_idx)
-                                .for_each(|d| {
-                                    if d.op() == Ops::Equal {
-                                        return;
-                                    }
-                                    d.1 = [d.data(), &suffix[..]].concat();
-                                });
-
-                            // An equality within edits, lets seek the next one and update this suffix too
-                            if data.is_empty() {
-                                if idx < diffs.len() - 1 && diffs[idx + 1].op() != Ops::Equal {
-                                    diffs[idx + 1].1 =
-                                        [&err_prefix[..], &suffix, diffs[idx + 1].data()].concat();
-                                }
-
-                                diffs.remove(idx);
-                            }
-                        }
-
-                        // Move back to where all of this started
-                        idx = err_start_idx;
-                        err_start = None;
-                        err_prefix = vec![];
-                        continue;
-                    }
-                }
-            }
-            idx += 1;
-        }
+        T::humanize(&mut diffs)?;
 
         let mut is_err = false;
         let html = diffs
             .iter()
-            .map(|diff| {
-                let txt = match str::from_utf8(diff.data()) {
+            .filter_map(|diff| {
+                let txt = match T::to_string(diff.data()) {
                     Ok(txt) => txt
                         .replace("&", "&amp;")
                         .replace("<", "&lt;")
@@ -2813,10 +2735,14 @@ impl DiffMatchPatch {
                     }
                 };
 
+                if txt.is_empty() {
+                    return None;
+                }
+
                 match diff.op() {
-                    Ops::Insert => format!("<ins style=\"background:#e6ffe6;\">{txt}</ins>"),
-                    Ops::Delete => format!("<del style=\"background:#ffe6e6;\">{txt}</del>"),
-                    Ops::Equal => format!("<span>{txt}</span>"),
+                    Ops::Insert => Some(format!("<ins style=\"background:#e6ffe6;\">{txt}</ins>")),
+                    Ops::Delete => Some(format!("<del style=\"background:#ffe6e6;\">{txt}</del>")),
+                    Ops::Equal => Some(format!("<span>{txt}</span>")),
                 }
             })
             .collect::<Vec<_>>()

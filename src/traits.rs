@@ -3,7 +3,10 @@ use std::hash::Hash;
 use chrono::NaiveTime;
 use percent_encoding::{percent_decode, AsciiSet, CONTROLS};
 
-use crate::dmp::{Diff, DiffMatchPatch};
+use crate::{
+    dmp::{Diff, DiffMatchPatch},
+    Ops,
+};
 
 pub type Efficient = u8;
 pub type Compat = char;
@@ -44,6 +47,10 @@ pub trait DType: Copy + Ord + Eq + Hash {
 
     fn percent_encode(input: &[Self]) -> Vec<Self>;
     fn percent_decode(input: &[Self]) -> Vec<Self>;
+
+    fn humanize(_diffs: &mut Vec<Diff<Self>>) -> Result<(), crate::Error> {
+        Ok(())
+    }
 }
 
 impl DType for u8 {
@@ -111,6 +118,99 @@ impl DType for u8 {
     #[inline]
     fn percent_decode(input: &[Self]) -> Vec<Self> {
         percent_decode(input).collect()
+    }
+
+    #[inline]
+    fn humanize(diffs: &mut Vec<Diff<Self>>) -> Result<(), crate::Error> {
+        let mut idx = 0_usize;
+        let mut err_prefix = vec![];
+
+        let mut err_start = None;
+
+        // First pass, we'll chomp of errors in the diffs?
+        // The pattern we have seen is that
+        while idx < diffs.len() {
+            let diff = &mut diffs[idx];
+
+            if let Err(e) = std::str::from_utf8(diff.data()) {
+                // Errors can come in 2 forms
+                // 1. error at the end of bytes - we'll keep prefixing the error bytes to all non equalities that follow
+                // 2. error at the begining of bytes - this one is tricky - we'll need to figure out the suffix at which the rest of the string is valid
+                if e.error_len().is_none() && err_start.is_none() {
+                    err_start = Some(idx);
+
+                    if diff.op() == Ops::Equal {
+                        err_prefix = diff.data()[e.valid_up_to()..].to_vec();
+                        diff.1 = if e.valid_up_to() > 0 {
+                            diff.data()[..e.valid_up_to()].to_vec()
+                        } else {
+                            vec![]
+                        };
+
+                        idx += 1;
+                        continue;
+                    }
+                }
+
+                if let Some(err_start_idx) = err_start {
+                    // For insert and delete add the prefix collected earlier (end error bytes)
+                    if diff.op() == Ops::Delete || diff.op() == Ops::Insert {
+                        diff.1 = [&err_prefix, diff.data()].concat();
+                    } else {
+                        if let Some(err_len) = e.error_len() {
+                            // Iteratively figure out at what point does the error go away if at-all
+                            let mut suffix = diff.data()[..err_len].to_vec();
+                            let mut data = diff.data()[err_len..].to_vec();
+
+                            while let Err(e) = std::str::from_utf8(&data) {
+                                if e.error_len().is_none() {
+                                    break;
+                                }
+
+                                // should never panic cos empty data is also a valid utf8
+                                let first_byte = data.remove(0);
+                                suffix.push(first_byte);
+                            }
+
+                            // here, we have a suffix to be added to all previous cases and a data that might be good string or error at the end of bytes
+                            // which is a separate cycle
+
+                            // Let's add the suffix to all the intermediate steps
+                            diff.1 = data.to_vec();
+                            diffs
+                                .iter_mut()
+                                .take(idx)
+                                .skip(err_start_idx)
+                                .for_each(|d| {
+                                    if d.op() == Ops::Equal {
+                                        return;
+                                    }
+                                    d.1 = [d.data(), &suffix[..]].concat();
+                                });
+
+                            // An equality within edits, lets seek the next one and update this suffix too
+                            if data.is_empty() {
+                                if idx < diffs.len() - 1 && diffs[idx + 1].op() != Ops::Equal {
+                                    diffs[idx + 1].1 =
+                                        [&err_prefix[..], &suffix, diffs[idx + 1].data()].concat();
+                                }
+
+                                diffs.remove(idx);
+                            }
+                        }
+
+                        // Move back to where all of this started
+                        idx = err_start_idx;
+                        err_start = None;
+                        err_prefix = vec![];
+                        continue;
+                    }
+                }
+            }
+            idx += 1;
+        }
+
+        Ok(())
     }
 }
 
