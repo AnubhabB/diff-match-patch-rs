@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use criterion::{criterion_group, criterion_main, Criterion};
-use diff_match_patch_rs::dmp::DiffMatchPatch;
+use diff_match_patch_rs::{dmp::DiffMatchPatch, Efficient};
 
 fn diff_main(c: &mut Criterion) {
     let basedir = Path::new("testdata");
@@ -11,7 +11,7 @@ fn diff_main(c: &mut Criterion) {
     let dmp = DiffMatchPatch::default();
 
     c.bench_function("diff-match-patch", |bencher| {
-        bencher.iter(|| dmp.diff_main_compat(&old, &new).unwrap());
+        bencher.iter(|| dmp.diff_main::<Efficient>(&old, &new).unwrap());
     });
 }
 

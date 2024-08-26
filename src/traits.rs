@@ -1,9 +1,12 @@
 use std::hash::Hash;
 
 use chrono::NaiveTime;
-use percent_encoding::{AsciiSet, CONTROLS};
+use percent_encoding::{percent_decode, AsciiSet, CONTROLS};
 
 use crate::dmp::{Diff, DiffMatchPatch};
+
+pub type Efficient = u8;
+pub type Compat = char;
 
 // Appending controls to ensure exact same encoding as cpp variant
 const ENCODE_SET: &AsciiSet = &CONTROLS
@@ -20,9 +23,8 @@ const ENCODE_SET: &AsciiSet = &CONTROLS
     .add(b'^')
     .add(b'|');
 
-
 pub trait DType: Copy + Ord + Eq + Hash {
-    fn differ(dmp: &DiffMatchPatch, txt_old: &str, txt_new: &str) -> Result<Vec<Diff<Self>>, crate::errors::Error>;
+    // fn differ(dmp: &DiffMatchPatch, txt_old: &str, txt_new: &str) -> Result<Vec<Diff<Self>>, crate::errors::Error>;
     fn bisect_split(
         dmp: &DiffMatchPatch,
         old: &[Self],
@@ -45,10 +47,6 @@ pub trait DType: Copy + Ord + Eq + Hash {
 }
 
 impl DType for u8 {
-    fn differ(dmp: &DiffMatchPatch, txt_old: &str, txt_new: &str) -> Result<Vec<Diff<Self>>, crate::errors::Error> {
-        dmp.diff_main(txt_old, txt_new)
-    }
-
     fn bisect_split(
         dmp: &DiffMatchPatch,
         old: &[u8],
@@ -84,7 +82,9 @@ impl DType for u8 {
 
     #[inline]
     fn to_string(data: &[Self]) -> Result<String, crate::Error> {
-        std::str::from_utf8(data).map_err(|_| crate::Error::Utf8Error).map(|s| s.to_string())
+        std::str::from_utf8(data)
+            .map_err(|_| crate::Error::Utf8Error)
+            .map(|s| s.to_string())
     }
 
     #[inline]
@@ -102,21 +102,19 @@ impl DType for u8 {
 
     #[inline]
     fn percent_encode(input: &[Self]) -> Vec<Self> {
-        percent_encoding::percent_encode(input, ENCODE_SET).collect::<String>().as_bytes().to_vec()
+        percent_encoding::percent_encode(input, ENCODE_SET)
+            .collect::<String>()
+            .as_bytes()
+            .to_vec()
     }
 
     #[inline]
     fn percent_decode(input: &[Self]) -> Vec<Self> {
-        // percent_encoding::percent_encode(input, ENCODE_SET).collect::<String>().as_bytes().to_vec()
-        todo!()
+        percent_decode(input).collect()
     }
 }
 
 impl DType for char {
-    fn differ(dmp: &DiffMatchPatch, txt_old: &str, txt_new: &str) -> Result<Vec<Diff<Self>>, crate::errors::Error> {
-        dmp.diff_main_compat(txt_old, txt_new)
-    }
-
     fn bisect_split(
         dmp: &DiffMatchPatch,
         old: &[char],
@@ -146,7 +144,7 @@ impl DType for char {
         Some(*self)
     }
 
-    fn from_str(str: &str) ->  Vec<Self> {
+    fn from_str(str: &str) -> Vec<Self> {
         str.chars().collect::<Vec<_>>()
     }
 
@@ -175,11 +173,11 @@ impl DType for char {
             .map(|c| {
                 let mut b = vec![0; c.len_utf8()];
                 c.encode_utf8(&mut b);
-                
-                b
-            }).collect::<Vec<_>>()
-            .concat();
 
+                b
+            })
+            .collect::<Vec<_>>()
+            .concat();
 
         let encoded = percent_encoding::percent_encode(&d[..], ENCODE_SET).collect::<String>();
 
@@ -188,15 +186,16 @@ impl DType for char {
 
     #[inline]
     fn percent_decode(input: &[Self]) -> Vec<Self> {
-        todo!()
+        let ip = input.iter().collect::<String>();
+        percent_decode(ip.as_bytes())
+            .decode_utf8()
+            .unwrap()
+            .chars()
+            .collect()
     }
 }
 
 impl DType for usize {
-    fn differ(_: &DiffMatchPatch, _: &str, _: &str) -> Result<Vec<Diff<Self>>, crate::errors::Error> {
-        unimplemented!()
-    }
-
     fn bisect_split(
         dmp: &DiffMatchPatch,
         old: &[usize],
