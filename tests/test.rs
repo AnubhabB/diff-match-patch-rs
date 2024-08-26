@@ -8,7 +8,6 @@ use diff_match_patch_rs::{Compat, DiffMatchPatch, Efficient, Error, Ops, PatchIn
 
 // const tests = [
 //     'testDiffIsDestructurable',
-//     'testDiffCleanupEfficiency',
 // ];
 
 #[test]
