@@ -2,6 +2,7 @@
 
 pub mod dmp;
 pub mod errors;
+pub mod fuzz;
 pub mod patch_input;
 pub mod traits;
 
