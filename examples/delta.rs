@@ -27,26 +27,26 @@ fn at_source() -> Result<String, Error> {
     // create a list of diffs
     let diffs = dmp.diff_main::<Efficient>(TXT_OLD, TXT_NEW)?;
 
-    // Now, we are going to create a list of `patches` to be applied to the old text to get the new text
-    let patches = dmp.patch_make(PatchInput::new_diffs(&diffs))?;
+    // When dealing with large text blocks and if you want to transmit this diff, `delta` will give you a minimal over the air representation of diffs
+    // We'll use this delta string to recreate `diffs` at the destination and then create patches to apply
+    let delta = dmp.diff_to_delta(&diffs)?;
 
-    // in the real world you are going to transmit or store this diff serialized to undiff format to be consumed or used somewhere elese
-    let patch_txt = dmp.patch_to_text(&patches);
-
-    // lets see how our patches look
-    println!("{patch_txt:?}");
+    // lets see how our delta looks
+    println!("{delta:?}");
     // You should see something like this
-    // @@ -22,225 +22,250 @@\n f a \n-m\n+carto\n o\n-der\n n \n-Major-Ge\n+i\n n\n-er\n+dividu\n al,%0A\n-I've\n+My\n  \n-i\n+a\n n\n-for\n+i\n mation\n+'s\n  \n-veget\n+comic\n a\n-b\n l\n-e\n , \n-a\n+u\n n\n-im\n+usu\n al, and \n+whi\n m\n+s\n i\n-ner\n+c\n al,%0AI\n+'m\n  \n-know \n+qui\n t\n-h\n e \n-kings of Engl\n a\n-n\n d\n-,\n+ept\n  a\n+t fu\n n\n-d\n+ny\n  \n-I\n+gags,\n  \n-qu\n+c\n o\n-t\n+m\n e\n+dic\n  the\n+ory\n  \n-fights\n+I\n  h\n-isto\n+ave \n r\n-ic\n+e\n a\n-l\n+d\n ,%0AFrom \n-M\n+wicked puns \n a\n-ra\n+nd s\n t\n-h\n+upid j\n o\n-n\n+kes\n  to \n-W\n+anvils th\n at\n-e\n+ d\n r\n-l\n o\n+p \n o\n-, i\n n \n+y\n o\n-rde\n+u\n r \n-cat\n+h\n e\n-goric\n a\n-l\n+d\n .%0A%0A\n-L\n+Now, l\n et's \n-sta\n+explo\n r\n-t with\n+e\n  some \n-bas\n+emot\n i\n-c\n+onal extreme\n s %F0%9F\n-%98\n+%8C\n %8A. W\n@@ -282,55 +282,53 @@\n our \n+ec\n sta\n-ndard sm\n+t\n i\n-ley\n+c\n  face %F0%9F\n-%99%82\n+%A4%A9\n , your \n+deva\n s\n+t\n a\n+te\n d face \n-%E2\n+%F0%9F\n %98\n-%B9%EF%B8%8F\n+%AD\n , an\n@@ -338,53 +338,60 @@\n our \n-ang\n+utte\n r\n+l\n y \n+confused \n face %F0%9F\n-%98%A0\n+%A4%AF\n . But \n-w\n+th\n a\n-i\n t\n-, there\n 's \n-m\n+n\n o\n-re\n+t all\n ! %F0%9F%A4\n-%A9\n+%94\n  We'\n@@ -411,20 +411,14 @@\n ome \n-more comp\n+subt\n le\n-x\n  emo\n@@ -435,78 +435,15 @@\n  %F0%9F%98\n-%8D, %F0%9F%A4%A4, and %F0%9F%9A%80. And let's not forget about the classics: %F0%9F%98%89\n+%90\n , %F0%9F\n-%91%8D\n+%99%83\n , an\n@@ -451,6 +451,6 @@\n  %F0%9F%91\n-%8F\n+%80\n .\n
+    // =25\t-1\t+carto\t=1\t-3\t=2\t-8\t+i\t=1\t-2\t+dividu\t=4\t-4\t+My\t=1\t-1\t+a\t=1\t-3\t+i\t=6\t+'s\t=1\t-5\t+comic\t=1\t-1\t=1\t-1\t=2\t-1\t+u\t=1\t-2\t+usu\t=8\t+whi\t=1\t+s\t=1\t-3\t+c\t=5\t+'m\t=1\t-5\t+qui\t=1\t-1\t=2\t-13\t=1\t-1\t=1\t-1\t+ept\t=2\t+t fu\t=1\t-1\t+ny\t=1\t-1\t+gags,\t=1\t-2\t+c\t=1\t-1\t+m\t=1\t+dic\t=4\t+ory\t=1\t-6\t+I\t=2\t-4\t+ave \t=1\t-2\t+e\t=1\t-1\t+d\t=7\t-1\t+wicked puns \t=1\t-2\t+nd s\t=1\t-1\t+upid j\t=1\t-1\t+kes\t=4\t-1\t+anvils th\t=2\t-1\t+ d\t=1\t-1\t=1\t+p \t=1\t-3\t=2\t+y\t=1\t-3\t+u\t=2\t-3\t+h\t=1\t-5\t=1\t-1\t+d\t=3\t-1\t+Now, l\t=5\t-3\t+explo\t=1\t-6\t+e\t=6\t-3\t+emot\t=1\t-1\t+onal extreme\t=4\t-1\t+%8C\t=18\t+ec\t=3\t-8\t+t\t=1\t-3\t+c\t=8\t-2\t+%A4%A9\t=7\t+deva\t=1\t+t\t=1\t+te\t=7\t-1\t+%F0%9F\t=1\t-4\t+%AD\t=11\t-3\t+utte\t=1\t+l\t=2\t+confused \t=7\t-2\t+%A4%AF\t=6\t-1\t+th\t=1\t-1\t=1\t-7\t=3\t-1\t+n\t=1\t-2\t+t all\t=5\t-1\t+%94\t=21\t-9\t+subt\t=2\t-1\t=18\t-64\t+%90\t=4\t-2\t+%99%83\t=9\t-1\t+%80\t=1
 
-    Ok(patch_txt)
+    Ok(delta)
 }
 
-fn at_destination(patches: &str) -> Result<(), Error> {
+fn at_destination(delta: &str) -> Result<(), Error> {
     // initializing the module
     let dmp = DiffMatchPatch::new();
 
-    // lets recreate the diffs from patches
-    let patches = dmp.patch_from_text::<Efficient>(patches)?;
+    // lets recreate the diffs from the minimal `delta` string
+    let delta = dmp.diff_from_delta::<Efficient>(TXT_OLD, delta)?;
+    // Additional step of conveting `delta` -> `patches`
+    let patches = dmp.patch_make(PatchInput::new_diffs(&delta))?;
 
     // Now, lets apply these patches to the `old_txt` which is the original to get the new text
     let (new_txt, ops) = dmp.patch_apply(&patches, TXT_OLD)?;
@@ -71,11 +71,11 @@ fn at_destination(patches: &str) -> Result<(), Error> {
 }
 
 fn main() -> Result<(), Error> {
-    // At the source of diff where the old text is being edited we'll create a set of patches
-    let patches = at_source()?;
+    // At the source of diff where the old text is being edited we'll create a `delta` - a `delta` is a minimal representation of `diffs`
+    let delta = at_source()?;
 
     // We'll send this diff to some destination e.g. db or the client where these changes are going to be applied
 
     // The destination will receive the patch string and will apply the patches to recreate the edits
-    at_destination(&patches)
+    at_destination(&delta)
 }

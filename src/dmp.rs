@@ -1409,93 +1409,6 @@ impl DiffMatchPatch {
         }
     }
 
-    #[inline]
-    pub fn to_delta<T: DType>(diffs: &[Diff<T>]) -> Vec<T> {
-        let mut data = diffs
-            .iter()
-            .map(|diff| {
-                match diff.op() {
-                    Ops::Insert => {
-                        let encoded = T::percent_encode(diff.data());
-                        // format!("+{encoded}")
-                        [&[T::from_char('+')], &encoded[..], &[T::from_char('\t')]].concat()
-                    }
-                    Ops::Delete => [
-                        &[T::from_char('-')],
-                        &T::from_str(diff.size().to_string().as_str())[..],
-                        &[T::from_char('\t')],
-                    ]
-                    .concat(),
-                    Ops::Equal => [
-                        &[T::from_char('=')],
-                        &T::from_str(diff.size().to_string().as_str())[..],
-                        &[T::from_char('\t')],
-                    ]
-                    .concat(),
-                }
-            })
-            .collect::<Vec<_>>()
-            .concat();
-
-        data.pop();
-
-        data
-    }
-
-    pub fn from_delta<T: DType>(
-        old: &[T],
-        delta: &[T],
-    ) -> Result<Vec<Diff<T>>, crate::errors::Error> {
-        let mut pointer = 0; // cursor to text
-        let mut diffs = vec![];
-
-        for token in delta.split(|&k| k == T::from_char('\t')) {
-            if token.is_empty() {
-                continue;
-            }
-
-            // Each token begins with a one character parameter which specifies the
-            // operation of this token (delete, insert, equality).
-            let opcode = token.first();
-            let param = &token[1..];
-
-            if opcode == Some(&T::from_char('+')) {
-                let param = T::percent_decode(param);
-                diffs.push(Diff::insert(&param));
-            } else if opcode == Some(&T::from_char('-')) || opcode == Some(&T::from_char('=')) {
-                let n = T::to_string(param)?
-                    .parse::<isize>()
-                    .map_err(|_| Error::Utf8Error)?;
-                if n < 0 {
-                    return Err(crate::errors::Error::InvalidInput);
-                }
-
-                let n = n as usize;
-                let new_pointer = pointer + n;
-                if new_pointer > old.len() {
-                    return Err(crate::errors::Error::InvalidInput);
-                }
-
-                let txt = &old[pointer..new_pointer];
-                pointer = new_pointer;
-
-                if opcode == Some(&T::from_char('=')) {
-                    diffs.push(Diff::equal(txt))
-                } else {
-                    diffs.push(Diff::delete(txt))
-                }
-            } else {
-                return Err(crate::errors::Error::InvalidInput);
-            }
-        }
-
-        if pointer != old.len() {
-            return Err(crate::errors::Error::InvalidInput);
-        }
-
-        Ok(diffs)
-    }
-
     // Reduce the number of edits by eliminating operationally trivial equalities.
     #[inline]
     fn cleanup_efficiency<T: DType>(&self, diffs: &mut Vec<Diff<T>>) {
@@ -2901,6 +2814,93 @@ impl DiffMatchPatch {
         }
 
         Ok(patches)
+    }
+
+    pub fn diff_to_delta<T: DType>(&self, diffs: &[Diff<T>]) -> Result<String, crate::Error> {
+        let mut data = diffs
+            .iter()
+            .map(|diff| match diff.op() {
+                Ops::Insert => {
+                    let encoded = T::percent_encode(diff.data());
+                    [&[T::from_char('+')], &encoded[..], &[T::from_char('\t')]].concat()
+                }
+                Ops::Delete => [
+                    &[T::from_char('-')],
+                    &T::from_str(diff.size().to_string().as_str())[..],
+                    &[T::from_char('\t')],
+                ]
+                .concat(),
+                Ops::Equal => [
+                    &[T::from_char('=')],
+                    &T::from_str(diff.size().to_string().as_str())[..],
+                    &[T::from_char('\t')],
+                ]
+                .concat(),
+            })
+            .collect::<Vec<_>>()
+            .concat();
+
+        data.pop();
+
+        T::to_string(&data)
+    }
+
+    pub fn diff_from_delta<T: DType>(
+        &self,
+        old: &str,
+        delta: &str,
+    ) -> Result<Vec<Diff<T>>, crate::errors::Error> {
+        let mut pointer = 0; // cursor to text
+        let mut diffs = vec![];
+
+        let old = T::from_str(old);
+        let delta = T::from_str(delta);
+
+        for token in delta.split(|&k| k == T::from_char('\t')) {
+            if token.is_empty() {
+                continue;
+            }
+
+            // Each token begins with a one character parameter which specifies the
+            // operation of this token (delete, insert, equality).
+            let opcode = token.first();
+            let param = &token[1..];
+
+            if opcode == Some(&T::from_char('+')) {
+                let param = T::percent_decode(param);
+                diffs.push(Diff::insert(&param));
+            } else if opcode == Some(&T::from_char('-')) || opcode == Some(&T::from_char('=')) {
+                let n = T::to_string(param)?
+                    .parse::<isize>()
+                    .map_err(|_| Error::Utf8Error)?;
+                if n < 0 {
+                    return Err(crate::errors::Error::InvalidInput);
+                }
+
+                let n = n as usize;
+                let new_pointer = pointer + n;
+                if new_pointer > old.len() {
+                    return Err(crate::errors::Error::InvalidInput);
+                }
+
+                let txt = &old[pointer..new_pointer];
+                pointer = new_pointer;
+
+                if opcode == Some(&T::from_char('=')) {
+                    diffs.push(Diff::equal(txt))
+                } else {
+                    diffs.push(Diff::delete(txt))
+                }
+            } else {
+                return Err(crate::errors::Error::InvalidInput);
+            }
+        }
+
+        if pointer != old.len() {
+            return Err(crate::errors::Error::InvalidInput);
+        }
+
+        Ok(diffs)
     }
 
     /// Applies a list of patches to text1. The first element of the return value is the newly patched text.
