@@ -678,6 +678,35 @@ fn test_diff_delta() -> Result<(), Error> {
     // Generates error (19 != 18).
     assert!(DiffMatchPatch::from_delta(&txt_old[1..], &delta).is_err());
 
+    let diffs = vec![
+        Diff::equal(&"jump".chars().collect::<Vec<_>>()[..]),
+        Diff::delete(&['s']),
+        Diff::insert(&['e', 'd']),
+        Diff::equal(&" over ".chars().collect::<Vec<_>>()[..]),
+        Diff::delete(&"the".chars().collect::<Vec<_>>()[..]),
+        Diff::insert(&['a']),
+        Diff::equal(&" lazy".chars().collect::<Vec<_>>()[..]),
+        Diff::insert(&"old dog".chars().collect::<Vec<_>>()[..]),
+    ];
+    let txt_old = &"jumps over the lazy".chars().collect::<Vec<_>>()[..];
+    assert_eq!(txt_old, DiffMatchPatch::diff_text_old(&diffs));
+
+    let delta = DiffMatchPatch::to_delta(&diffs);
+    assert_eq!(
+        &"=4\t-1\t+ed\t=6\t-3\t+a\t=5\t+old dog"
+            .chars()
+            .collect::<Vec<_>>()[..],
+        &delta
+    );
+    // Convert delta string into a diff.
+    assert_eq!(diffs, DiffMatchPatch::from_delta(txt_old, &delta)?);
+
+    // Generates error (19 != 20).
+    assert!(DiffMatchPatch::from_delta(&[txt_old, &['+']].concat()[..], &delta).is_err());
+
+    // Generates error (19 != 18).
+    assert!(DiffMatchPatch::from_delta(&txt_old[1..], &delta).is_err());
+
     // Test deltas with special characters.
     let diffs = vec![
         Diff::equal("\u{0680} \x00 \t %".as_bytes()),
@@ -692,6 +721,27 @@ fn test_diff_delta() -> Result<(), Error> {
     // Convert delta string into a diff.
     assert_eq!(&diffs, &DiffMatchPatch::from_delta(&txt_old, &delta)?);
 
+    let diffs = vec![
+        Diff::equal(&"\u{0680} \x00 \t %".chars().collect::<Vec<_>>()[..]),
+        Diff::delete(&"\u{0681} \x01 \n ^".chars().collect::<Vec<_>>()[..]),
+        Diff::insert(&"\u{0682} \x02 \\ |".chars().collect::<Vec<_>>()[..]),
+    ];
+    let txt_old = DiffMatchPatch::diff_text_old(&diffs);
+    assert_eq!(
+        &"\u{0680} \x00 \t %\u{0681} \x01 \n ^"
+            .chars()
+            .collect::<Vec<_>>()[..],
+        txt_old
+    );
+    let delta = DiffMatchPatch::to_delta(&diffs);
+
+    assert_eq!(
+        &"=7\t-7\t+%DA%82 %02 %5C %7C".chars().collect::<Vec<_>>()[..],
+        &delta[..]
+    );
+    // Convert delta string into a diff.
+    assert_eq!(&diffs, &DiffMatchPatch::from_delta(&txt_old, &delta)?);
+
     // Verify pool of unchanged characters.
     let diffs = vec![Diff::insert(
         "A-Z a-z 0-9 - _ . ! ~ * ' ( ) ; / ? : @ & = + $ , # ".as_bytes(),
@@ -702,14 +752,25 @@ fn test_diff_delta() -> Result<(), Error> {
         std::str::from_utf8(&txt_new).unwrap()
     );
 
+    let diffs = vec![Diff::insert(
+        &"A-Z a-z 0-9 - _ . ! ~ * ' ( ) ; / ? : @ & = + $ , # "
+            .chars()
+            .collect::<Vec<_>>()[..],
+    )];
+    let txt_new = DiffMatchPatch::diff_text_new(&diffs);
+    assert_eq!(
+        "A-Z a-z 0-9 - _ . ! ~ * \' ( ) ; / ? : @ & = + $ , # ",
+        &txt_new.iter().collect::<String>()
+    );
+
     let delta = DiffMatchPatch::to_delta(&diffs);
     assert_eq!(
         "+A-Z a-z 0-9 - _ . ! ~ * \' ( ) ; / ? : @ & = + $ , # ",
-        std::str::from_utf8(&delta).unwrap()
+        &delta.iter().collect::<String>()
     );
 
     // Convert delta string into a diff.
-    assert_eq!(diffs, DiffMatchPatch::from_delta("".as_bytes(), &delta)?);
+    assert_eq!(diffs, DiffMatchPatch::from_delta(&[], &delta)?);
     Ok(())
 }
 

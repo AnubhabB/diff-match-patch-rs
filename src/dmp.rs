@@ -3,7 +3,7 @@ use std::{char, collections::HashMap, fmt::Display};
 
 use chrono::{NaiveTime, TimeDelta, Utc};
 
-use crate::{errors::Error, DType};
+use crate::{errors::Error, DType, PatchInput};
 
 /// Enum representing the different ops of diff
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -2179,11 +2179,6 @@ impl<T: DType> Patch<T> {
     pub fn diffs(&self) -> &[Diff<T>] {
         &self.diffs[..]
     }
-}
-pub enum PatchInput<'a, T: DType> {
-    Texts(&'a str, &'a str),
-    Diffs(&'a [Diff<T>]),
-    TextDiffs(&'a str, &'a [Diff<T>]),
 }
 
 pub type Patches<T> = Vec<Patch<T>>;
