@@ -3,7 +3,7 @@ use std::{char, collections::HashMap, fmt::Display};
 
 use chrono::{NaiveTime, TimeDelta, Utc};
 
-use crate::{errors::Error, DType, PatchInput};
+use crate::{errors::Error, html::HtmlConfig, DType, PatchInput};
 
 /// Enum representing the different ops of diff
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -2543,7 +2543,7 @@ impl DiffMatchPatch {
     /// Vec of changes (Diff).
     /// # Example
     /// ```
-    /// use diff_match_patch_rs::{DiffMatchPatch, Error, Efficient};
+    /// # use diff_match_patch_rs::{DiffMatchPatch, Error, Efficient};
     ///
     /// # fn main() -> Result<(), Error> {
     /// let mut dmp = DiffMatchPatch::new();
@@ -2579,7 +2579,6 @@ impl DiffMatchPatch {
         Self::cleanup_semantic(diffs)
     }
 
-    /// <div class="warning">Not Implemented</div>
     /// This function is similar to diff_cleanupSemantic, except that instead of optimising a diff to be human-readable, it optimises the diff to be efficient for machine processing.
     /// The results of both cleanup types are often the same.
     ///
@@ -2616,10 +2615,31 @@ impl DiffMatchPatch {
     }
 
     /// Takes a diff array and returns a pretty HTML sequence. This function is mainly intended as an example from which to write ones own display functions.
-    /// TODO: html config
+    /// 
+    /// # Example
+    /// ```
+    /// # use diff_match_patch_rs::{DiffMatchPatch, Error, Efficient, HtmlConfig};
+    /// # fn main() -> Result<(), Error> {
+    /// let dmp = DiffMatchPatch::new();
+    /// 
+    /// let diffs = dmp.diff_main::<Efficient>("The old man and the new house?", "The old man and the old dog!")?;
+    /// let htmlcfg = HtmlConfig::new();
+    /// 
+    /// let pretty = dmp.diff_pretty_html(&diffs, &htmlcfg)?;
+    /// // Should print: "<span>The old man and the </span><del>new house?</del><ins>old dog!</ins>"
+    /// println!("{pretty}");
+    /// 
+    /// # Ok(())
+    /// # }
+    /// ```
+    /// 
+    /// Check out [`HtmlConfig`] options for ways to control the generated html.
+    /// 
+    /// [`HtmlConfig`]: html/struct.HtmlConfig.html
     pub fn diff_pretty_html<T: DType>(
         &self,
         diffs: &[Diff<T>],
+        html_cfg: &HtmlConfig
     ) -> Result<String, crate::errors::Error> {
         let mut diffs = diffs.to_vec();
         DiffMatchPatch::cleanup_semantic(&mut diffs);
@@ -2631,11 +2651,18 @@ impl DiffMatchPatch {
             .iter()
             .filter_map(|diff| {
                 let txt = match T::to_string(diff.data()) {
-                    Ok(txt) => txt
+                    Ok(txt) => {
+                        let mut txt = txt
                         .replace("&", "&amp;")
                         .replace("<", "&lt;")
-                        .replace(">", "&gt;")
-                        .replace("\n", "&para;<br>"),
+                        .replace(">", "&gt;");
+
+                        if html_cfg.nltobr() {
+                            txt = txt.replace('\n', "<br>")
+                        }
+                        
+                        txt
+                    }
                     Err(e) => {
                         eprintln!("{e:?}");
                         is_err = true;
@@ -2648,9 +2675,33 @@ impl DiffMatchPatch {
                 }
 
                 match diff.op() {
-                    Ops::Insert => Some(format!("<ins style=\"background:#e6ffe6;\">{txt}</ins>")),
-                    Ops::Delete => Some(format!("<del style=\"background:#ffe6e6;\">{txt}</del>")),
-                    Ops::Equal => Some(format!("<span>{txt}</span>")),
+                    Ops::Insert => Some(
+                        format!(
+                            "<{}{}{}>{txt}</{}>",
+                            html_cfg.insert_tag(),
+                            if let Some(cl) = html_cfg.insert_class() { format!(" class=\"{cl}\"") } else { String::new() },
+                            if let Some(st) = html_cfg.insert_style() { format!(" style=\"{st}\"") } else { String::new() },
+                            html_cfg.insert_tag()
+                        )
+                    ),
+                    Ops::Delete => Some(
+                        format!(
+                            "<{}{}{}>{txt}</{}>",
+                            html_cfg.delete_tag(),
+                            if let Some(cl) = html_cfg.delete_class() { format!(" class=\"{cl}\"") } else { String::new() },
+                            if let Some(st) = html_cfg.delete_style() { format!(" style=\"{st}\"") } else { String::new() },
+                            html_cfg.delete_tag()
+                        )
+                    ),
+                    Ops::Equal => Some(
+                        format!(
+                            "<{}{}{}>{txt}</{}>",
+                            html_cfg.equality_tag(),
+                            if let Some(cl) = html_cfg.equality_class() { format!(" class=\"{cl}\"") } else { String::new() },
+                            if let Some(st) = html_cfg.equality_style() { format!(" style=\"{st}\"") } else { String::new() },
+                            html_cfg.equality_tag()
+                        )
+                    ),
                 }
             })
             .collect::<Vec<_>>()
@@ -2686,9 +2737,38 @@ impl DiffMatchPatch {
         self.match_internal(text.as_bytes(), pattern.as_bytes(), loc)
     }
 
-    /// Given two texts, or an already computed list of differences, return an array of patch objects.
-    /// The third form PatchInput::TextDiffs(...) is preferred, use it if you happen to have that data available, otherwise this function will compute the missing pieces.
-    /// TODO: add example
+    /// Given two texts, or an already computed list of differences (`diffs`), return an array of patch objects.
+    /// 
+    /// # Example
+    /// ```
+    /// # use diff_match_patch_rs::{DiffMatchPatch, Error, Efficient, PatchInput};
+    /// 
+    /// # fn main() -> Result<(), Error> {
+    /// let dmp = DiffMatchPatch::new();
+    /// 
+    /// // You can also make patches from the old and new string directly
+    /// let patches = dmp.patch_make::<Efficient>(PatchInput::new_text_text("Apples are a fruit.", "Bananas are also fruit"))?;
+    /// let (new_from_old, _) = dmp.patch_apply(&patches, "Apples are a fruit.")?;
+    /// assert_eq!("Bananas are also fruit", new_from_old);
+    /// 
+    /// // Or, create some diffs in `Efficient` or `Compact` mode
+    /// let diffs = dmp.diff_main::<Efficient>("Apples are a fruit.", "Bananas are also fruit")?;
+    /// // Now, lets convert the diffs to a bunch of patches - you can use an existing set of diffs to create patches
+    /// let patches = dmp.patch_make(PatchInput::new_diffs(&diffs))?;
+    /// let (new_from_old, _) = dmp.patch_apply(&patches, "Apples are a fruit.")?;
+    /// assert_eq!("Bananas are also fruit", new_from_old);
+    /// 
+    /// // Or, from the source texts and diffs
+    /// let patches = dmp.patch_make(PatchInput::new_text_diffs("Apples are a fruit.", &diffs))?;
+    /// let (new_from_old, _) = dmp.patch_apply(&patches, "Apples are a fruit.")?;
+    /// assert_eq!("Bananas are also fruit", new_from_old);
+    /// # Ok(())
+    /// # }
+    /// ```
+    /// 
+    /// The [`PatchInput::new_text_diffs`] method is preferred, use it if you happen to have that data available, otherwise this function will compute the missing pieces.
+    /// 
+    /// 
     pub fn patch_make<T: DType>(
         &self,
         input: PatchInput<T>,
@@ -2721,13 +2801,60 @@ impl DiffMatchPatch {
     }
 
     /// Reduces an array of patch objects to a block of text which looks extremely similar to the standard GNU diff/patch format. This text may be stored or transmitted.
-    /// TODO: add example
+    /// 
+    /// # Example
+    /// 
+    /// ```
+    /// # use diff_match_patch_rs::{DiffMatchPatch, Error, Compat, PatchInput};
+    /// 
+    /// # fn main() -> Result<(), Error> {
+    /// let dmp = DiffMatchPatch::new();
+    /// 
+    /// // Making patches from source and edited text - both in `Efficient` and `Compat` mode
+    /// let patches = dmp.patch_make::<Compat>(PatchInput::new_text_text("Apples are fruit!", "Bananas are also fruit!"))?;
+    /// let patch_to_text = dmp.patch_to_text(&patches);
+    /// 
+    /// // Prints patches in GNU diff/ patch format
+    /// // You can use this format for transmission and/ or storage.
+    /// println!("{patch_to_text}");
+    /// 
+    /// # Ok(())
+    /// # }
+    /// ```
+    /// 
+    /// Check out the [`diff_to_delta`] and [`diff_from_delta`] methods for a more compact way of representing diffs.
+    /// 
+    /// [`diff_to_delta`]: ./method.diff_to_delta
+    /// [`diff_from_delta`]: ./method.diff_from_delta
+    /// 
     pub fn patch_to_text<T: DType>(&self, patches: &Patches<T>) -> String {
         patches.iter().map(|p| p.to_string()).collect::<String>()
     }
 
-    /// Parses a block of text (which was presumably created by the patch_toText function) and returns an array of patch objects.
-    /// TODO: add example
+    /// Parses a block of text (which was presumably created by the [`patch_to_text`] method) and returns an array of patch objects.
+    ///
+    /// # Example
+    /// 
+    /// ```
+    /// # use diff_match_patch_rs::{DiffMatchPatch, Error, Compat, PatchInput};
+    /// 
+    /// # fn main() -> Result<(), Error> {
+    /// let dmp = DiffMatchPatch::new();
+    /// 
+    /// // Making patches from source and edited text - both in `Efficient` and `Compat` mode
+    /// let patches = dmp.patch_make::<Compat>(PatchInput::new_text_text("Apples are fruit!", "Bananas are also fruit!"))?;
+    /// let patch_to_text = dmp.patch_to_text(&patches);
+    /// 
+    /// // let's create patches back from text
+    /// let patches_recreated = dmp.patch_from_text::<Compat>(&patch_to_text)?;
+    /// 
+    /// // Now you can `patch_apply` the `patches_recreated` to your source text
+    /// 
+    /// # Ok(())
+    /// # }
+    /// ```
+    /// 
+    /// [`patch_to_text`]: ./method.patch_to_text
     pub fn patch_from_text<T: DType>(&self, text: &str) -> Result<Patches<T>, Error> {
         if text.is_empty() {
             return Ok(vec![]);
@@ -2816,6 +2943,33 @@ impl DiffMatchPatch {
         Ok(patches)
     }
 
+
+    /// Crush the diff into an encoded string which describes the operations required to transform text_old into text_new.
+    /// E.g. =3\t-2\t+ing  -> Keep 3 chars, delete 2 chars, insert 'ing'.
+    /// Operations are tab-separated. Inserted text is escaped using %xx notation.
+    /// 
+    /// # Example
+    /// 
+    /// ```
+    /// # use diff_match_patch_rs::{DiffMatchPatch, Error, Compat, PatchInput};
+    /// # fn main() -> Result<(), Error> {
+    /// 
+    /// let dmp = DiffMatchPatch::new();
+    /// 
+    /// // let's create some diffs
+    /// let diffs = dmp.diff_main::<Compat>("The old house and the new dog!", "The old man and the new dog!")?;
+    /// // now, you can create a `delta` string which can be used to re-create the diffs
+    /// let delta = dmp.diff_to_delta(&diffs)?;
+    /// println!("{delta:?}");
+    /// // You should see something like the following
+    /// // "=8\t-5\t+man\t=17"
+    /// 
+    /// // now you can use the `diff_from_delta()` to recover the diffs
+    /// let diffs_later = dmp.diff_from_delta::<Compat>("The old house and the new dog!", &delta);
+    /// 
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn diff_to_delta<T: DType>(&self, diffs: &[Diff<T>]) -> Result<String, crate::Error> {
         let mut data = diffs
             .iter()
@@ -2845,6 +2999,38 @@ impl DiffMatchPatch {
         T::to_string(&data)
     }
 
+
+    /// Given the original text `old`, and an encoded string which describes the
+    /// operations required to transform text1 into text2, compute the full diff.
+    /// 
+    /// # Example
+    /// 
+    /// ```
+    /// # use diff_match_patch_rs::{DiffMatchPatch, Error, Compat, PatchInput};
+    /// # fn main() -> Result<(), Error> {
+    /// 
+    /// let dmp = DiffMatchPatch::new();
+    /// 
+    /// // let's create some diffs
+    /// let diffs = dmp.diff_main::<Compat>("The old house and the new dog!", "The old man and the new dog!")?;
+    /// // now, you can create a `delta` string which can be used to re-create the diffs
+    /// let delta = dmp.diff_to_delta(&diffs)?;
+    /// println!("{delta:?}");
+    /// // You should see something like the following
+    /// // "=8\t-5\t+man\t=17"
+    /// 
+    /// // now you can use the `diff_from_delta()` to recover the diffs
+    /// let diffs_later = dmp.diff_from_delta::<Compat>("The old house and the new dog!", &delta);
+    /// // Now, you can use these diffs to apply patches to the source text
+    /// let patches = dmp.patch_make(PatchInput::new_text_diffs("The old house and the new dog!", &diffs))?;
+    /// let (new_from_old, _) = dmp.patch_apply(&patches, "The old house and the new dog!")?;
+    /// 
+    /// 
+    /// assert_eq!("The old man and the new dog!", &new_from_old);
+    /// 
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn diff_from_delta<T: DType>(
         &self,
         old: &str,
@@ -2903,17 +3089,44 @@ impl DiffMatchPatch {
         Ok(diffs)
     }
 
-    /// Applies a list of patches to text1. The first element of the return value is the newly patched text.
+    /// Applies a list of patches to `source_txt`. The first element of the return value is the newly patched text.
     /// The second element is an array of true/false values indicating which of the patches were successfully applied.
     /// [Note that this second element is not too useful since large patches may get broken up internally, resulting in a longer results list than the input with no way to figure out which patch succeeded or failed.
     /// A more informative API is in development.]
     ///
     /// The `match_distance` and `match_threshold` properties are used to evaluate patch application on text which does not match exactly.
-    /// In addition, the diff_match_patch.patch_delete_threshold property determines how closely the text within a major (~64 character) delete needs to match the expected text.
-    /// If patch_delete_threshold is closer to 0, then the deleted text must match the expected text more closely.
-    /// If patch_delete_threshold is closer to 1, then the deleted text may contain anything.
-    /// In most use cases Patch_DeleteThreshold should just be set to the same value as match_threshold.
-    /// TODO: add example
+    /// In addition, the `DiffMatchPatch.delete_threshold` property determines how closely the text within a major (~64 character) delete needs to match the expected text.
+    /// If `delete_threshold` is closer to 0, then the deleted text must match the expected text more closely.
+    /// If `delete_threshold` is closer to 1, then the deleted text may contain anything.
+    /// In most use cases `delete_threshold` should just be set to the same value as `match_threshold`. Both values default to `0.5`
+    /// 
+    /// # Example
+    /// # Example
+    /// ```
+    /// # use diff_match_patch_rs::{DiffMatchPatch, Error, Efficient, PatchInput};
+    /// 
+    /// # fn main() -> Result<(), Error> {
+    /// let dmp = DiffMatchPatch::new();
+    /// 
+    /// // You can also make patches from the old and new string directly
+    /// let patches = dmp.patch_make::<Efficient>(PatchInput::new_text_text("Apples are a fruit.", "Bananas are also fruit"))?;
+    /// let (new_from_old, _) = dmp.patch_apply(&patches, "Apples are a fruit.")?;
+    /// assert_eq!("Bananas are also fruit", new_from_old);
+    /// 
+    /// // Or, create some diffs in `Efficient` or `Compact` mode
+    /// let diffs = dmp.diff_main::<Efficient>("Apples are a fruit.", "Bananas are also fruit")?;
+    /// // Now, lets convert the diffs to a bunch of patches - you can use an existing set of diffs to create patches
+    /// let patches = dmp.patch_make(PatchInput::new_diffs(&diffs))?;
+    /// let (new_from_old, _) = dmp.patch_apply(&patches, "Apples are a fruit.")?;
+    /// assert_eq!("Bananas are also fruit", new_from_old);
+    /// 
+    /// // Or, from the source texts and diffs
+    /// let patches = dmp.patch_make(PatchInput::new_text_diffs("Apples are a fruit.", &diffs))?;
+    /// let (new_from_old, _) = dmp.patch_apply(&patches, "Apples are a fruit.")?;
+    /// assert_eq!("Bananas are also fruit", new_from_old);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn patch_apply<T: DType>(
         &self,
         patches: &Patches<T>,

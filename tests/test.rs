@@ -4,6 +4,7 @@ use chrono::Utc;
 
 use diff_match_patch_rs::dmp::Diff;
 
+use diff_match_patch_rs::html::HtmlConfig;
 use diff_match_patch_rs::{Compat, DiffMatchPatch, Efficient, Error, Ops, PatchInput};
 
 #[test]
@@ -64,13 +65,18 @@ fn test_diff_bisect() -> Result<(), Error> {
 #[test]
 fn test_diff_pretty_html() -> Result<(), Error> {
     let dmp = DiffMatchPatch::new();
+    let mut html_cfg = HtmlConfig::new();
+
+    html_cfg.set_insert_style(Some("background:#e6ffe6;"));
+    html_cfg.set_delete_style(Some("background:#ffe6e6;"));
+
     // Basic
     let diffs = [
         Diff::equal(b"a\n"),
         Diff::delete(b"<B>b</B>"),
         Diff::insert(b"c&d"),
     ];
-    assert_eq!("<span>a&para;<br></span><del style=\"background:#ffe6e6;\">&lt;B&gt;b&lt;/B&gt;</del><ins style=\"background:#e6ffe6;\">c&amp;d</ins>", dmp.diff_pretty_html(&diffs)?);
+    assert_eq!("<span>a<br></span><del style=\"background:#ffe6e6;\">&lt;B&gt;b&lt;/B&gt;</del><ins style=\"background:#e6ffe6;\">c&amp;d</ins>", dmp.diff_pretty_html(&diffs, &html_cfg)?);
 
     // Monkey busiess around Emoticons and extended utf-8 🤪🤩🤔
     // This gave me a lot of heart-burn
@@ -83,7 +89,7 @@ fn test_diff_pretty_html() -> Result<(), Error> {
     let diffs = dmp.diff_main::<Efficient>(old, new)?;
     assert_eq!(
         "<del style=\"background:#ffe6e6;\">🤪</del><ins style=\"background:#e6ffe6;\">🤔</ins>",
-        dmp.diff_pretty_html(&diffs)?
+        dmp.diff_pretty_html(&diffs, &html_cfg)?
     );
 
     // Now Case 1. but with some text before and after
@@ -92,7 +98,7 @@ fn test_diff_pretty_html() -> Result<(), Error> {
     let diffs = dmp.diff_main::<Efficient>(old, new)?;
     assert_eq!(
         "<span>I'm puzzled</span><del style=\"background:#ffe6e6;\">🤪</del><ins style=\"background:#e6ffe6;\">🤔</ins><span> or </span><del style=\"background:#ffe6e6;\">am I?</del><ins style=\"background:#e6ffe6;\">thinking I guess!</ins>",
-        dmp.diff_pretty_html(&diffs)?
+        dmp.diff_pretty_html(&diffs, &html_cfg)?
     );
 
     // Case 2. Emoticons with the third position different
@@ -101,7 +107,7 @@ fn test_diff_pretty_html() -> Result<(), Error> {
     let diffs = dmp.diff_main::<Efficient>(old, new)?;
     assert_eq!(
         "<del style=\"background:#ffe6e6;\">🍊</del><ins style=\"background:#e6ffe6;\">🌊</ins>",
-        dmp.diff_pretty_html(&diffs)?
+        dmp.diff_pretty_html(&diffs, &html_cfg)?
     );
 
     // Now Case 2. but with some text, lets complicate this
@@ -110,7 +116,7 @@ fn test_diff_pretty_html() -> Result<(), Error> {
     let diffs = dmp.diff_main::<Efficient>(old, new)?;
     assert_eq!(
         "<del style=\"background:#ffe6e6;\">🍊, a</del><ins style=\"background:#e6ffe6;\">A</ins><span>ah orange</span><del style=\"background:#ffe6e6;\"> </del><ins style=\"background:#e6ffe6;\">!🌊</ins><span>is the new </span><del style=\"background:#ffe6e6;\">black!</del><ins style=\"background:#e6ffe6;\">🌊</ins>",
-        dmp.diff_pretty_html(&diffs)?
+        dmp.diff_pretty_html(&diffs, &html_cfg)?
     );
 
     // Case 3. with second and third different, but lets complicate this with an equality
@@ -119,7 +125,7 @@ fn test_diff_pretty_html() -> Result<(), Error> {
     let diffs = dmp.diff_main::<Efficient>(old, new)?;
     assert_eq!(
         "<ins style=\"background:#e6ffe6;\">𖠊</ins><del style=\"background:#ffe6e6;\">𠌊</del>",
-        dmp.diff_pretty_html(&diffs)?
+        dmp.diff_pretty_html(&diffs, &html_cfg)?
     );
 
     // Case 3. but let there be a swap
@@ -128,7 +134,7 @@ fn test_diff_pretty_html() -> Result<(), Error> {
     let diffs = dmp.diff_main::<Efficient>(old, new)?;
     assert_eq!(
         "<del style=\"background:#ffe6e6;\">𞠄</del><ins style=\"background:#e6ffe6;\">𠞄</ins>",
-        dmp.diff_pretty_html(&diffs)?
+        dmp.diff_pretty_html(&diffs, &html_cfg)?
     );
 
     // Case 4. swap at the last 2 positions
@@ -137,7 +143,7 @@ fn test_diff_pretty_html() -> Result<(), Error> {
     let diffs = dmp.diff_main::<Efficient>(old, new)?;
     assert_eq!(
         "<del style=\"background:#ffe6e6;\">🍌</del><ins style=\"background:#e6ffe6;\">🌍</ins>",
-        dmp.diff_pretty_html(&diffs)?
+        dmp.diff_pretty_html(&diffs, &html_cfg)?
     );
 
     // Let's do this with a slightly longish string
@@ -146,8 +152,8 @@ fn test_diff_pretty_html() -> Result<(), Error> {
     let diffs = dmp.diff_main::<Efficient>(old, new)?;
 
     assert_eq!(
-        "<del style=\"background:#ffe6e6;\">Now, let's explore some emotional extreme</del><ins style=\"background:#e6ffe6;\">Let's start with some basic</ins><span>s </span><del style=\"background:#ffe6e6;\">🌊</del><ins style=\"background:#e6ffe6;\">😊</ins><span>.&para;<br>We've got your </span><del style=\"background:#ffe6e6;\">ec</del><span>sta</span><del style=\"background:#ffe6e6;\">tic</del><ins style=\"background:#e6ffe6;\">ndard smiley</ins><span> face </span><del style=\"background:#ffe6e6;\">🤩</del><ins style=\"background:#e6ffe6;\">🙂</ins><span>, your </span><del style=\"background:#ffe6e6;\">devastate</del><ins style=\"background:#e6ffe6;\">sa</ins><span>d face </span><del style=\"background:#ffe6e6;\">😭</del><ins style=\"background:#e6ffe6;\">☹️</ins><span>, and your </span><del style=\"background:#ffe6e6;\">utterly confused</del><ins style=\"background:#e6ffe6;\">angry</ins><span> face </span><del style=\"background:#ffe6e6;\">🤯</del><ins style=\"background:#e6ffe6;\">😠</ins><span>. But </span><del style=\"background:#ffe6e6;\">that's not all</del><ins style=\"background:#e6ffe6;\">wait, there's more</ins><span>! </span><del style=\"background:#ffe6e6;\">🤔</del><ins style=\"background:#e6ffe6;\">🤩</ins><span> We've also got some </span><del style=\"background:#ffe6e6;\">subt</del><ins style=\"background:#e6ffe6;\">more comp</ins><span>le</span><ins style=\"background:#e6ffe6;\">x</ins><span> emotions like </span><del style=\"background:#ffe6e6;\">😐</del><ins style=\"background:#e6ffe6;\">😍, 🤤, and 🚀. And let's not forget about the classics: 😉</ins><span>, </span><del style=\"background:#ffe6e6;\">🙃</del><ins style=\"background:#e6ffe6;\">👍</ins><span>, and </span><del style=\"background:#ffe6e6;\">👀</del><ins style=\"background:#e6ffe6;\">👏</ins><span>.</span>",
-        dmp.diff_pretty_html(&diffs)?
+        "<del style=\"background:#ffe6e6;\">Now, let's explore some emotional extreme</del><ins style=\"background:#e6ffe6;\">Let's start with some basic</ins><span>s </span><del style=\"background:#ffe6e6;\">🌊</del><ins style=\"background:#e6ffe6;\">😊</ins><span>.<br>We've got your </span><del style=\"background:#ffe6e6;\">ec</del><span>sta</span><del style=\"background:#ffe6e6;\">tic</del><ins style=\"background:#e6ffe6;\">ndard smiley</ins><span> face </span><del style=\"background:#ffe6e6;\">🤩</del><ins style=\"background:#e6ffe6;\">🙂</ins><span>, your </span><del style=\"background:#ffe6e6;\">devastate</del><ins style=\"background:#e6ffe6;\">sa</ins><span>d face </span><del style=\"background:#ffe6e6;\">😭</del><ins style=\"background:#e6ffe6;\">☹️</ins><span>, and your </span><del style=\"background:#ffe6e6;\">utterly confused</del><ins style=\"background:#e6ffe6;\">angry</ins><span> face </span><del style=\"background:#ffe6e6;\">🤯</del><ins style=\"background:#e6ffe6;\">😠</ins><span>. But </span><del style=\"background:#ffe6e6;\">that's not all</del><ins style=\"background:#e6ffe6;\">wait, there's more</ins><span>! </span><del style=\"background:#ffe6e6;\">🤔</del><ins style=\"background:#e6ffe6;\">🤩</ins><span> We've also got some </span><del style=\"background:#ffe6e6;\">subt</del><ins style=\"background:#e6ffe6;\">more comp</ins><span>le</span><ins style=\"background:#e6ffe6;\">x</ins><span> emotions like </span><del style=\"background:#ffe6e6;\">😐</del><ins style=\"background:#e6ffe6;\">😍, 🤤, and 🚀. And let's not forget about the classics: 😉</ins><span>, </span><del style=\"background:#ffe6e6;\">🙃</del><ins style=\"background:#e6ffe6;\">👍</ins><span>, and </span><del style=\"background:#ffe6e6;\">👀</del><ins style=\"background:#e6ffe6;\">👏</ins><span>.</span>",
+        dmp.diff_pretty_html(&diffs, &html_cfg)?
     );
 
     // Compat mode
@@ -157,7 +163,7 @@ fn test_diff_pretty_html() -> Result<(), Error> {
         Diff::delete(&"<B>b</B>".chars().collect::<Vec<_>>()[..]),
         Diff::insert(&"c&d".chars().collect::<Vec<_>>()[..]),
     ];
-    assert_eq!("<span>a&para;<br></span><del style=\"background:#ffe6e6;\">&lt;B&gt;b&lt;/B&gt;</del><ins style=\"background:#e6ffe6;\">c&amp;d</ins>", dmp.diff_pretty_html(&diffs)?);
+    assert_eq!("<span>a<br></span><del style=\"background:#ffe6e6;\">&lt;B&gt;b&lt;/B&gt;</del><ins style=\"background:#e6ffe6;\">c&amp;d</ins>", dmp.diff_pretty_html(&diffs, &html_cfg)?);
 
     // `Compat` mode shouldn't require monkey business atall
 
@@ -169,7 +175,7 @@ fn test_diff_pretty_html() -> Result<(), Error> {
     let diffs = dmp.diff_main::<Compat>(old, new)?;
     assert_eq!(
         "<del style=\"background:#ffe6e6;\">🤪</del><ins style=\"background:#e6ffe6;\">🤔</ins>",
-        dmp.diff_pretty_html(&diffs)?
+        dmp.diff_pretty_html(&diffs, &html_cfg)?
     );
 
     // Now Case 1. but with some text before and after
@@ -178,7 +184,7 @@ fn test_diff_pretty_html() -> Result<(), Error> {
     let diffs = dmp.diff_main::<Compat>(old, new)?;
     assert_eq!(
         "<span>I'm puzzled</span><del style=\"background:#ffe6e6;\">🤪</del><ins style=\"background:#e6ffe6;\">🤔</ins><span> or </span><del style=\"background:#ffe6e6;\">am I?</del><ins style=\"background:#e6ffe6;\">thinking I guess!</ins>",
-        dmp.diff_pretty_html(&diffs)?
+        dmp.diff_pretty_html(&diffs, &html_cfg)?
     );
 
     // Case 2. Emoticons with the third position different
@@ -187,7 +193,7 @@ fn test_diff_pretty_html() -> Result<(), Error> {
     let diffs = dmp.diff_main::<Compat>(old, new)?;
     assert_eq!(
         "<del style=\"background:#ffe6e6;\">🍊</del><ins style=\"background:#e6ffe6;\">🌊</ins>",
-        dmp.diff_pretty_html(&diffs)?
+        dmp.diff_pretty_html(&diffs, &html_cfg)?
     );
 
     // Now Case 2. but with some text, lets complicate this
@@ -196,7 +202,7 @@ fn test_diff_pretty_html() -> Result<(), Error> {
     let diffs = dmp.diff_main::<Compat>(old, new)?;
     assert_eq!(
         "<del style=\"background:#ffe6e6;\">🍊, a</del><ins style=\"background:#e6ffe6;\">A</ins><span>ah orange</span><del style=\"background:#ffe6e6;\"> </del><ins style=\"background:#e6ffe6;\">!🌊</ins><span>is the new </span><del style=\"background:#ffe6e6;\">black!</del><ins style=\"background:#e6ffe6;\">🌊</ins>",
-        dmp.diff_pretty_html(&diffs)?
+        dmp.diff_pretty_html(&diffs, &html_cfg)?
     );
 
     // Case 3. with second and third different, but lets complicate this with an equality
@@ -205,7 +211,7 @@ fn test_diff_pretty_html() -> Result<(), Error> {
     let diffs = dmp.diff_main::<Compat>(old, new)?;
     assert_eq!(
         "<del style=\"background:#ffe6e6;\">𠌊</del><ins style=\"background:#e6ffe6;\">𖠊</ins>",
-        dmp.diff_pretty_html(&diffs)?
+        dmp.diff_pretty_html(&diffs, &html_cfg)?
     );
 
     // Case 3. but let there be a swap
@@ -214,7 +220,7 @@ fn test_diff_pretty_html() -> Result<(), Error> {
     let diffs = dmp.diff_main::<Compat>(old, new)?;
     assert_eq!(
         "<del style=\"background:#ffe6e6;\">𞠄</del><ins style=\"background:#e6ffe6;\">𠞄</ins>",
-        dmp.diff_pretty_html(&diffs)?
+        dmp.diff_pretty_html(&diffs, &html_cfg)?
     );
 
     // Case 4. swap at the last 2 positions
@@ -223,7 +229,7 @@ fn test_diff_pretty_html() -> Result<(), Error> {
     let diffs = dmp.diff_main::<Compat>(old, new)?;
     assert_eq!(
         "<del style=\"background:#ffe6e6;\">🍌</del><ins style=\"background:#e6ffe6;\">🌍</ins>",
-        dmp.diff_pretty_html(&diffs)?
+        dmp.diff_pretty_html(&diffs, &html_cfg)?
     );
 
     // Let's do this with a slightly longish string
@@ -232,8 +238,8 @@ fn test_diff_pretty_html() -> Result<(), Error> {
     let diffs = dmp.diff_main::<Compat>(old, new)?;
 
     assert_eq!(
-        "<del style=\"background:#ffe6e6;\">Now, let's explore some emotional extreme</del><ins style=\"background:#e6ffe6;\">Let's start with some basic</ins><span>s </span><del style=\"background:#ffe6e6;\">🌊</del><ins style=\"background:#e6ffe6;\">😊</ins><span>.&para;<br>We've got your </span><del style=\"background:#ffe6e6;\">ec</del><span>sta</span><del style=\"background:#ffe6e6;\">tic</del><ins style=\"background:#e6ffe6;\">ndard smiley</ins><span> face </span><del style=\"background:#ffe6e6;\">🤩</del><ins style=\"background:#e6ffe6;\">🙂</ins><span>, your </span><del style=\"background:#ffe6e6;\">devastate</del><ins style=\"background:#e6ffe6;\">sa</ins><span>d face </span><del style=\"background:#ffe6e6;\">😭</del><ins style=\"background:#e6ffe6;\">☹️</ins><span>, and your </span><del style=\"background:#ffe6e6;\">utterly confused</del><ins style=\"background:#e6ffe6;\">angry</ins><span> face </span><del style=\"background:#ffe6e6;\">🤯</del><ins style=\"background:#e6ffe6;\">😠</ins><span>. But </span><del style=\"background:#ffe6e6;\">that's not all</del><ins style=\"background:#e6ffe6;\">wait, there's more</ins><span>! </span><del style=\"background:#ffe6e6;\">🤔</del><ins style=\"background:#e6ffe6;\">🤩</ins><span> We've also got some </span><del style=\"background:#ffe6e6;\">subt</del><ins style=\"background:#e6ffe6;\">more comp</ins><span>le</span><ins style=\"background:#e6ffe6;\">x</ins><span> emotions like </span><del style=\"background:#ffe6e6;\">😐</del><ins style=\"background:#e6ffe6;\">😍, 🤤, and 🚀. And let's not forget about the classics: 😉</ins><span>, </span><del style=\"background:#ffe6e6;\">🙃</del><ins style=\"background:#e6ffe6;\">👍</ins><span>, and </span><del style=\"background:#ffe6e6;\">👀</del><ins style=\"background:#e6ffe6;\">👏</ins><span>.</span>",
-        dmp.diff_pretty_html(&diffs)?
+        "<del style=\"background:#ffe6e6;\">Now, let's explore some emotional extreme</del><ins style=\"background:#e6ffe6;\">Let's start with some basic</ins><span>s </span><del style=\"background:#ffe6e6;\">🌊</del><ins style=\"background:#e6ffe6;\">😊</ins><span>.<br>We've got your </span><del style=\"background:#ffe6e6;\">ec</del><span>sta</span><del style=\"background:#ffe6e6;\">tic</del><ins style=\"background:#e6ffe6;\">ndard smiley</ins><span> face </span><del style=\"background:#ffe6e6;\">🤩</del><ins style=\"background:#e6ffe6;\">🙂</ins><span>, your </span><del style=\"background:#ffe6e6;\">devastate</del><ins style=\"background:#e6ffe6;\">sa</ins><span>d face </span><del style=\"background:#ffe6e6;\">😭</del><ins style=\"background:#e6ffe6;\">☹️</ins><span>, and your </span><del style=\"background:#ffe6e6;\">utterly confused</del><ins style=\"background:#e6ffe6;\">angry</ins><span> face </span><del style=\"background:#ffe6e6;\">🤯</del><ins style=\"background:#e6ffe6;\">😠</ins><span>. But </span><del style=\"background:#ffe6e6;\">that's not all</del><ins style=\"background:#e6ffe6;\">wait, there's more</ins><span>! </span><del style=\"background:#ffe6e6;\">🤔</del><ins style=\"background:#e6ffe6;\">🤩</ins><span> We've also got some </span><del style=\"background:#ffe6e6;\">subt</del><ins style=\"background:#e6ffe6;\">more comp</ins><span>le</span><ins style=\"background:#e6ffe6;\">x</ins><span> emotions like </span><del style=\"background:#ffe6e6;\">😐</del><ins style=\"background:#e6ffe6;\">😍, 🤤, and 🚀. And let's not forget about the classics: 😉</ins><span>, </span><del style=\"background:#ffe6e6;\">🙃</del><ins style=\"background:#e6ffe6;\">👍</ins><span>, and </span><del style=\"background:#ffe6e6;\">👀</del><ins style=\"background:#e6ffe6;\">👏</ins><span>.</span>",
+        dmp.diff_pretty_html(&diffs, &html_cfg)?
     );
 
     Ok(())

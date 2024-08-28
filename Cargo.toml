@@ -13,7 +13,6 @@ categories = ["algorithms", "text-synchronization"]
 [dependencies]
 chrono           = "0"
 percent-encoding = "2"
-urlencoding = "2"
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu", "wasm32-unknown-unknown"]
