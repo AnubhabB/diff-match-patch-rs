@@ -1,13 +1,13 @@
 /// A struct representing some properties to control the [`pretty_html`] generation.
 /// The `insert_tag`, `delete_tag` and `equality_tag` represents the `html` tag to wrap the part of the text being inserted, deleted or equality.
-/// 
+///
 /// E.g. if `insert_tag` is set to `span`, the text to be inserted will be wrapped around with `<span>some text to insert</span>`.
 /// `insert_tag` defaults to the `ins` tag, `delete_tag` defaults to the `del` tag and `equality_tag` defaults to `span`.
-/// 
+///
 /// `nltobr` switch enables or disables replacing of `\n` in the text with a `<br>` element. Defaults to `true`
-/// 
+///
 /// `insert_class`, `delete_class` or `equality_class` if set will be added as a `class="your css class"`. Defaults to `None`
-/// 
+///
 /// `insert_style`, `delete_style` and `equality_style` would add css style property to the output.
 /// E.g. if `insert_style: Some("background: yellow; color: purple")` is set the
 /// `insert` part of the pretty html would look like `<ins style="background: yellow; color: purple">insert text</ins>`
@@ -21,10 +21,10 @@ pub struct HtmlConfig<'a> {
     equality_class: Option<&'a str>,
     insert_style: Option<&'a str>,
     delete_style: Option<&'a str>,
-    equality_style: Option<&'a str>
+    equality_style: Option<&'a str>,
 }
 
-impl <'a>Default for HtmlConfig<'a> {
+impl<'a> Default for HtmlConfig<'a> {
     fn default() -> Self {
         Self {
             insert_tag: "ins",
@@ -36,22 +36,22 @@ impl <'a>Default for HtmlConfig<'a> {
             equality_class: None,
             insert_style: None,
             delete_style: None,
-            equality_style: None
+            equality_style: None,
         }
     }
 }
 
-impl <'a>HtmlConfig<'a> {
+impl<'a> HtmlConfig<'a> {
     /// Creates a new instance of the struct with some defaults.
-    /// 
+    ///
     /// `insert_tag` defaults to "ins".
-    /// 
+    ///
     /// `delete_tag` defaults to "del"
-    /// 
+    ///
     /// `equality_tag` defaults to "span"
-    /// 
+    ///
     /// `nltobr` defaults to `true`
-    /// 
+    ///
     /// Other fields defaults to `None`
     pub fn new() -> Self {
         Self::default()
