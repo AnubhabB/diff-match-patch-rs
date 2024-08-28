@@ -11,10 +11,6 @@ diff implementation is based on [Myers' diff algorithm](https://neil.fraser.name
 ## Benchmarks
 Benchmarks are maintained [diff-match-patch-bench repository](https://github.com/AnubhabB/diff-match-patch-rs-bench)
 
-# diff-match-patch-rs-bench
-Benchmarking the crate `diff-match-patch-rs` against other implementations.
-
-## Benchmark
 | Lang.   | Library                                                                                  | Diff Avg. | Patch Avg. | Bencher    | Mode        | Correct |
 |:-------:|:----------------------------------------------------------------------------------------:|:---------:|:----------:|:----------:|:-----------:|:-------:|
 | `rust`  | [diff_match_patch v0.1.1<sup>**</sup>](https://crates.io/crates/diff_match_patch)        | 68.108 ms | 10.596 ms | Criterion   | -           |    ✅   |
@@ -44,6 +40,5 @@ Diff Match Patch was originally built in 2006 to power Google Docs.
 - **Rust**: [dmp](https://crates.io/crates/dmp)
 - **Rust**: [Dissimilar](https://crates.io/crates/dissimilar) by the awesome [David Tolnay](https://github.com/dtolnay)
 - **Rust**: [diff_match_patch](https://crates.io/crates/diff_match_patch)
-- **Rust**: [diffmatchpatch](https://crates.io/crates/diffmatchpatch)
 
 
