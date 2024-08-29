@@ -15,6 +15,11 @@ A very **fast**, **accurate** and **wasm ready** port of [Diff Match Patch](http
 
 ## Usage Examples
 
+```toml
+[dependencies]
+diff-match-patch-rs = "0.1.0-beta.3"
+```
+
 ### `Effitient` mode
 
 ```rust

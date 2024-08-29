@@ -16,6 +16,11 @@
 //!
 //! ## Usage Examples
 //!
+//! ```toml
+//! [dependencies]
+//! diff-match-patch-rs = "0.1.0-beta.3"
+//! ```
+//!
 //! ### `Effitient` mode
 //!
 //! ```rust
