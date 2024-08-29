@@ -7,7 +7,7 @@ repository = "https://github.com/AnubhabB/diff-match-patch-rs.git"
 description = "A high-performance port of Myer's diff algorithm to perform the operations required for synchronizing plain text."
 readme = "README.md"
 license = "MIT OR Apache-2.0"
-keywords = ["diff", "match", "patch", "myer's diff", "text synchronization"]
+keywords = ["diff", "match", "patch", "text synchronization"]
 categories = ["algorithms", "text-synchronization"]
 
 [dependencies]
