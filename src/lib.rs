@@ -1,5 +1,3 @@
-// #![feature(trait_alias, let_chains)]
-
 //! # diff-match-patch-rs: Efficient port of Google's diff-match-patch implemented in Rust
 
 //! A very **fast**, **accurate** and **wasm ready** port of [Diff Match Patch](https://github.com/dmsnell/diff-match-patch) in Rust. The
