@@ -11,6 +11,8 @@
 /// `insert_style`, `delete_style` and `equality_style` would add css style property to the output.
 /// E.g. if `insert_style: Some("background: yellow; color: purple")` is set the
 /// `insert` part of the pretty html would look like `<ins style="background: yellow; color: purple">insert text</ins>`
+/// 
+/// [`pretty_html`]: struct.DiffMatchPatch.html/method.diff_pretty_html
 pub struct HtmlConfig<'a> {
     insert_tag: &'a str,
     delete_tag: &'a str,
