@@ -1,5 +1,9 @@
 # diff-match-patch-rs: Efficient port of Google's diff-match-patch implemented in Rust
 
+[<img alt="github" src="https://img.shields.io/badge/github-Anubhab/diff_match_patch_rs-8da0cb?style=for-the-badge&labelColor=555555&logo=github" height="20">](https://github.com/AnubhabB/diff-match-patch-rs)
+[<img alt="crates.io" src="https://img.shields.io/crates/v/diff-match-patch-rs" height="20">](https://crates.io/crates/diff-match-patch-rs)
+[<img alt="docs.rs" src="https://img.shields.io/badge/docs.rs-diff_match_patch_rs?style=for-the-badge&logo=docs.rs&labelColor=%23555555" height="20">](https://docs.rs/diff-match-patch-rs)
+
 A very **fast**, **accurate** and **wasm ready** port of [Diff Match Patch](https://github.com/dmsnell/diff-match-patch) in Rust. The diff implementation is based on [Myers' diff algorithm](https://neil.fraser.name/writing/diff/myers.pdf).
 
 ## Highlights of this crate
