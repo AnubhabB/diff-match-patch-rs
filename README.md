@@ -1,12 +1,15 @@
 # diff-match-patch-rs: Efficient port of Google's diff-match-patch implemented in Rust
 
-This library is a port of the [Diff Match Patch](https://github.com/dmsnell/diff-match-patch) to Rust. The
+A very **fast**, **accurate** and **wasm ready** port of [Diff Match Patch](https://github.com/dmsnell/diff-match-patch) in Rust. The
 diff implementation is based on [Myers' diff algorithm](https://neil.fraser.name/writing/diff/myers.pdf).
 
 
-## What's different in this implementation?
-- Instead of `String` this library works with `&[u8]` avoiding allocation as much as possible, this in-turn provides significant performance boost [See Benchmarks](#benchmarks)
-- The **line diff** speedup follows a slightly more efficient execution path
+## Highlights of this crate
+- Exposes two modes of operating with `diff-match-patch`, a `Efficient` mode and `Compat` mode. While the `Efficient` mode squeezes out the max performance the `Compat` mode ensures compatibility across other libraries or implementations (rust or otherwise). According to [Benchmarks](#benchmarks), our slower `Compat` mode is still faster than other implementations in rust.
+    - `**Efficient**` mode works on `&[u8]` and the generated diffs break compatibility with other implementation. Use the `**Efficient**` mode ONLY if you are using this `[crate]()` at the source of diff generation and the destination.
+    - `**Compat**` mode on the other hand works on `&[char]` and the generated `diffs` and `patches` are compatible across other implementations of `diff-match-patch`. Checkout `tests/compat.rs` for some test cases around this.
+-  `wasm` ready, you can check out a `[demo here](https://github.com/AnubhabB/wasm-diff.git)`
+- **Accurate**, can't believe I have to write this but during the course of this implementation I've realised there are a bunch of implementations that have some implementation issues (wrong diffs, inaccurate flows, silent errors etc.).
 
 ## Benchmarks
 Benchmarks are maintained [diff-match-patch-bench repository](https://github.com/AnubhabB/diff-match-patch-rs-bench)
