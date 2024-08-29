@@ -13,6 +13,7 @@ diff implementation is based on [Myers' diff algorithm](https://neil.fraser.name
 - Helper method **pretty_html** provided by this crate is a bit more advanced and allows some configurations to control the generated visuals elements.
 - Well tested
 - Added a `fuzzer` for sanity
+- Exposes the same APIs as [Diff Match Patch](https://github.com/dmsnell/diff-match-patch) with minor changes to make it more idiomatic in Rust.
 
 
 ## Usage Examples
@@ -22,17 +23,20 @@ diff implementation is based on [Myers' diff algorithm](https://neil.fraser.name
 ```rust
 use diff_match_patch_rs::{DiffMatchPatch, Efficient, Error, PatchInput};
 
+// This is the source text
+const TXT_OLD: &str = "I am the very model of a modern Major-General, I've information on vegetable, animal, and mineral, 🚀👏👀"
+
+// Let's assume this to be the text that was editted from the source text
+const TXT_NEW: &str = "I am the very model of a cartoon individual, My animation's comical, unusual, and whimsical.😊👀"
+
 // An example of a function that creates a diff and returns a set of patches serialized
 fn at_source() -> Result<String, Error> {
     // initializing the module
     let dmp = DiffMatchPatch::new();
-
     // create a list of diffs
     let diffs = dmp.diff_main::<Efficient>(TXT_OLD, TXT_NEW)?;
-
     // Now, we are going to create a list of `patches` to be applied to the old text to get the new text
     let patches = dmp.patch_make(PatchInput::new_diffs(&diffs))?;
-
     // in the real world you are going to transmit or store this diff serialized to undiff format to be consumed or used somewhere elese
     let patch_txt = dmp.patch_to_text(&patches);
 
@@ -42,13 +46,10 @@ fn at_source() -> Result<String, Error> {
 fn at_destination(patches: &str) -> Result<(), Error> {
     // initializing the module
     let dmp = DiffMatchPatch::new();
-
     // lets recreate the diffs from patches
     let patches = dmp.patch_from_text::<Efficient>(patches)?;
-
     // Now, lets apply these patches to the `old_txt` which is the original to get the new text
     let (new_txt, ops) = dmp.patch_apply(&patches, TXT_OLD)?;
-
     // Lets print out if the ops succeeded or not
     ops.iter()
         .for_each(|&o| println!("{}", if o { "OK" } else { "FAIL" }));
@@ -71,15 +72,79 @@ fn at_destination(patches: &str) -> Result<(), Error> {
 fn main() -> Result<(), Error> {
     // At the source of diff where the old text is being edited we'll create a set of patches
     let patches = at_source()?;
-
     // We'll send this diff to some destination e.g. db or the client where these changes are going to be applied
-
     // The destination will receive the patch string and will apply the patches to recreate the edits
     at_destination(&patches)
 }
 
 ```
 
+### `Compat` mode
+
+```rust
+use diff_match_patch_rs::{DiffMatchPatch, Compat, Error, PatchInput};
+
+// This is the source text
+const TXT_OLD: &str = "I am the very model of a modern Major-General, I've information on vegetable, animal, and mineral, 🚀👏👀"
+
+// Let's assume this to be the text that was editted from the source text
+const TXT_NEW: &str = "I am the very model of a cartoon individual, My animation's comical, unusual, and whimsical.😊👀"
+
+// An example of a function that creates a diff and returns a set of patches serialized
+fn at_source() -> Result<String, Error> {
+    // initializing the module
+    let dmp = DiffMatchPatch::new();
+    // create a list of diffs
+    let diffs = dmp.diff_main::<Compat>(TXT_OLD, TXT_NEW)?;
+    // Now, we are going to create a list of `patches` to be applied to the old text to get the new text
+    let patches = dmp.patch_make(PatchInput::new_diffs(&diffs))?;
+    // in the real world you are going to transmit or store this diff serialized to undiff format to be consumed or used somewhere elese
+    let patch_txt = dmp.patch_to_text(&patches);
+
+    Ok(patch_txt)
+}
+
+fn at_destination(patches: &str) -> Result<(), Error> {
+    // initializing the module
+    let dmp = DiffMatchPatch::new();
+    // lets recreate the diffs from patches
+    let patches = dmp.patch_from_text::<Compat>(patches)?;
+    // Now, lets apply these patches to the `old_txt` which is the original to get the new text
+    let (new_txt, ops) = dmp.patch_apply(&patches, TXT_OLD)?;
+    // Lets print out if the ops succeeded or not
+    ops.iter()
+        .for_each(|&o| println!("{}", if o { "OK" } else { "FAIL" }));
+
+    // If everything goes as per plan you should see
+    // OK
+    // OK
+    // ... and so on
+
+    // lets check out if our `NEW_TXT` (presumably the edited one)
+    if new_txt != TXT_NEW {
+        return Err(Error::InvalidInput);
+    }
+
+    println!("Wallah! Patch applied successfully!");
+
+    Ok(())
+}
+
+fn main() -> Result<(), Error> {
+    // At the source of diff where the old text is being edited we'll create a set of patches
+    let patches = at_source()?;
+    // We'll send this diff to some destination e.g. db or the client where these changes are going to be applied
+    // The destination will receive the patch string and will apply the patches to recreate the edits
+    at_destination(&patches)
+}
+```
+
+#### Note
+The `Efficient` and `Compat` mode APIs are identical with the only chage being the `generic` parameter declared during the calls.
+
+E.g. we initiated a `diff` in the `Efficient` mode with `dmp.diff_main::<Efficient>( ... )` while for `Compat` mode we did `dmp.diff_main::<Compat>( ... )`.
+
+<div class="warning">The `Effitient` and `Compat` modes are mutually exclusive and will not generate correct output if used interchangibly at source and destination</div>
 
 ## Benchmarks
 Benchmarks are maintained [diff-match-patch-bench repository](https://github.com/AnubhabB/diff-match-patch-rs-bench)

@@ -1187,10 +1187,12 @@ impl DiffMatchPatch {
     // Scores range from 6 (best) to 0 (worst)
     #[inline]
     fn cleanup_semantic_score<T: DType>(one: &[T], two: &[T]) -> u8 {
-        let (char1, char2) = if let (Some(&char1), Some(&char2)) = (one.last(), two.first())
-            && let (Some(c1), Some(c2)) = (char1.as_char(), char2.as_char())
-        {
-            (c1, c2)
+        let (char1, char2) = if let (Some(&char1), Some(&char2)) = (one.last(), two.first()) {
+            if let (Some(c1), Some(c2)) = (char1.as_char(), char2.as_char()) {
+                (c1, c2)
+            } else {
+                return 6;
+            }
         } else {
             return 6;
         };
@@ -1337,10 +1339,10 @@ impl DiffMatchPatch {
             }
         }
 
-        if let Some(dl) = diffs.last()
-            && dl.data().is_empty()
-        {
-            diffs.pop();
+        if let Some(dl) = diffs.last() {
+            if dl.data().is_empty() {
+                diffs.pop();
+            }
         }
 
         difflen = diffs.len();
@@ -1466,45 +1468,45 @@ impl DiffMatchPatch {
                 // <ins>A</del>X<ins>C</ins><del>D</del>
                 // <ins>A</ins><del>B</del>X<del>C</del>
 
-                if let Some(le) = &mut last_eq
-                    && ((pre_ins && pre_del && post_ins && post_del)
+                if let Some(le) = &mut last_eq {
+                    if (pre_ins && pre_del && post_ins && post_del)
                         || (le.len() < edit_cost / 2
-                            && pre_ins as u8 + pre_del as u8 + post_ins as u8 + post_del as u8
-                                == 3))
-                {
-                    // Duplicate record.
-                    let item = equalities.pop().unwrap();
-                    // change the second copy (after the insert in next line) to Insert
-                    diffs[item].0 = Ops::Insert;
-                    // add an item
-                    diffs.insert(item, Diff::delete(le));
+                            && pre_ins as u8 + pre_del as u8 + post_ins as u8 + post_del as u8 == 3)
+                    {
+                        // Duplicate record.
+                        let item = equalities.pop().unwrap();
+                        // change the second copy (after the insert in next line) to Insert
+                        diffs[item].0 = Ops::Insert;
+                        // add an item
+                        diffs.insert(item, Diff::delete(le));
 
-                    last_eq = None;
+                        last_eq = None;
 
-                    if pre_ins && pre_del {
-                        // No changes made which could affect previous entry, keep going.
-                        post_ins = true;
-                        post_del = true;
+                        if pre_ins && pre_del {
+                            // No changes made which could affect previous entry, keep going.
+                            post_ins = true;
+                            post_del = true;
 
-                        equalities = vec![];
-                    } else {
-                        equalities.pop();
-
-                        if let Some(&l) = equalities.last() {
-                            pointer = l;
+                            equalities = vec![];
                         } else {
-                            pointer = 0;
+                            equalities.pop();
+
+                            if let Some(&l) = equalities.last() {
+                                pointer = l;
+                            } else {
+                                pointer = 0;
+                                post_ins = false;
+                                post_del = false;
+                                changes = true;
+                                continue;
+                            };
+                            // pointer = equalitiesLength > 0 ?
+                            //     equalities[equalitiesLength - 1] : -1;
                             post_ins = false;
                             post_del = false;
-                            changes = true;
-                            continue;
-                        };
-                        // pointer = equalitiesLength > 0 ?
-                        //     equalities[equalitiesLength - 1] : -1;
-                        post_ins = false;
-                        post_del = false;
+                        }
+                        changes = true;
                     }
-                    changes = true;
                 }
             }
             pointer += 1;
