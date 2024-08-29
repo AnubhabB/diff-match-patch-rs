@@ -8,7 +8,7 @@ description = "A high-performance port of Myer's diff algorithm to perform the o
 readme = "README.md"
 license = "MIT OR Apache-2.0"
 keywords = ["diff", "match", "patch", "text-synchronization"]
-categories = ["algorithms", "text-synchronization"]
+categories = ["algorithms", "text-processing", "text-editors", "wasm"]
 
 [dependencies]
 chrono           = "0"
