@@ -21,7 +21,7 @@ A very **fast**, **accurate** and **wasm ready** port of [Diff Match Patch](http
 
 ```toml
 [dependencies]
-diff-match-patch-rs = "0.1.0-beta.3"
+diff-match-patch-rs = "0.1.0-beta.4"
 ```
 
 ### `Effitient` mode
