@@ -1,7 +1,5 @@
 use std::time::Instant;
 
-use chrono::Utc;
-
 use diff_match_patch_rs::dmp::Diff;
 
 use diff_match_patch_rs::html::HtmlConfig;
@@ -387,11 +385,11 @@ fn test_diff_main() -> Result<(), Error> {
     let a = vec!["`Twas brillig, and the slithy toves\nDid gyre and gimble in the wabe:\nAll mimsy were the borogoves,\nAnd the mome raths outgrabe.\n"; 2048].join("");
     let b = vec!["I am the very model of a modern major general,\nI\'ve information vegetable, animal, and mineral,\nI know the kings of England, and I quote the fights historical,\nFrom Marathon to Waterloo, in order categorical.\n"; 2048].join("");
 
-    let start = Utc::now().time();
+    let start = Instant::now();
     dmp.diff_main::<Efficient>(&a, &b)?;
-    let end = Utc::now().time();
+    let end = Instant::now();
     // Test that we took at least the timeout period (+ 5ms being generous).
-    assert!((end - start).num_milliseconds() <= LOW_TIMEOUT as i64 + 5);
+    assert!((end - start).as_millis() <= LOW_TIMEOUT as u128 + 5);
 
     // Test the linemode speedup.
     // Must be long to pass the 100 char cutoff.
@@ -599,11 +597,11 @@ fn test_diff_main_compat() -> Result<(), Error> {
     let a = vec!["`Twas brillig, and the slithy toves\nDid gyre and gimble in the wabe:\nAll mimsy were the borogoves,\nAnd the mome raths outgrabe.\n"; 2048].join("");
     let b = vec!["I am the very model of a modern major general,\nI\'ve information vegetable, animal, and mineral,\nI know the kings of England, and I quote the fights historical,\nFrom Marathon to Waterloo, in order categorical.\n"; 2048].join("");
 
-    let start = Utc::now().time();
+    let start = Instant::now();
     dmp.diff_main::<Efficient>(&a, &b)?;
-    let end = Utc::now().time();
+    let end = Instant::now();
     // Test that we took at least the timeout period (+ 5ms being generous).
-    assert!((end - start).num_milliseconds() <= LOW_TIMEOUT as i64 + 5);
+    assert!((end - start).as_millis() <= LOW_TIMEOUT as u128 + 5);
 
     // Test the linemode speedup.
     // Must be long to pass the 100 char cutoff.
@@ -1297,6 +1295,14 @@ fn test_patch_apply() -> Result<(), Error> {
         ("x123".to_string(), vec![true]),
         dmp.patch_apply(&patches, "x")?
     );
+
+    let dmp = DiffMatchPatch::new();
+    // Tests for issue https://github.com/AnubhabB/diff-match-patch-rs/issues/2
+    let strp = "@@ -1,11 +1,5 @@\n-%F0%9F%8D%8A, a\n+A\n ah o\n@@ -3,17 +3,21 @@\n h orange\n- \n+!%F0%9F%8C%8A\n is the n\n@@ -23,10 +23,8 @@\n new \n-black!\n+%F0%9F%8C%8A\n";
+    let patches = dmp.patch_from_text::<Compat>(strp)?;
+    assert_eq!(strp, dmp.patch_to_text(&patches));
+    let (patched, _) = dmp.patch_apply(&patches, "🍊, aah orange is the new black!")?;
+    assert_eq!(patched, "Aah orange!🌊is the new 🌊");
 
     Ok(())
 }
