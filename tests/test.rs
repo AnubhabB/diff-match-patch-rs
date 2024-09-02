@@ -1,7 +1,5 @@
 use std::time::Instant;
 
-use chrono::Utc;
-
 use diff_match_patch_rs::dmp::Diff;
 
 use diff_match_patch_rs::html::HtmlConfig;
@@ -387,11 +385,11 @@ fn test_diff_main() -> Result<(), Error> {
     let a = vec!["`Twas brillig, and the slithy toves\nDid gyre and gimble in the wabe:\nAll mimsy were the borogoves,\nAnd the mome raths outgrabe.\n"; 2048].join("");
     let b = vec!["I am the very model of a modern major general,\nI\'ve information vegetable, animal, and mineral,\nI know the kings of England, and I quote the fights historical,\nFrom Marathon to Waterloo, in order categorical.\n"; 2048].join("");
 
-    let start = Utc::now().time();
+    let start = Instant::now();
     dmp.diff_main::<Efficient>(&a, &b)?;
-    let end = Utc::now().time();
+    let end = Instant::now();
     // Test that we took at least the timeout period (+ 5ms being generous).
-    assert!((end - start).num_milliseconds() <= LOW_TIMEOUT as i64 + 5);
+    assert!((end - start).as_millis() <= LOW_TIMEOUT as u128 + 5);
 
     // Test the linemode speedup.
     // Must be long to pass the 100 char cutoff.
@@ -599,11 +597,11 @@ fn test_diff_main_compat() -> Result<(), Error> {
     let a = vec!["`Twas brillig, and the slithy toves\nDid gyre and gimble in the wabe:\nAll mimsy were the borogoves,\nAnd the mome raths outgrabe.\n"; 2048].join("");
     let b = vec!["I am the very model of a modern major general,\nI\'ve information vegetable, animal, and mineral,\nI know the kings of England, and I quote the fights historical,\nFrom Marathon to Waterloo, in order categorical.\n"; 2048].join("");
 
-    let start = Utc::now().time();
+    let start = Instant::now();
     dmp.diff_main::<Efficient>(&a, &b)?;
-    let end = Utc::now().time();
+    let end = Instant::now();
     // Test that we took at least the timeout period (+ 5ms being generous).
-    assert!((end - start).num_milliseconds() <= LOW_TIMEOUT as i64 + 5);
+    assert!((end - start).as_millis() <= LOW_TIMEOUT as u128 + 5);
 
     // Test the linemode speedup.
     // Must be long to pass the 100 char cutoff.

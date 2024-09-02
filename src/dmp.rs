@@ -1,7 +1,15 @@
 use core::str;
 use std::{char, collections::HashMap, fmt::Display};
 
+#[cfg(target_arch = "wasm32")]
 use chrono::{NaiveTime, TimeDelta, Utc};
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::{Duration, Instant};
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) type Time = NaiveTime;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) type Time = Instant;
 
 use crate::{errors::Error, html::HtmlConfig, DType, PatchInput};
 
@@ -166,10 +174,17 @@ impl DiffMatchPatch {
     }
 
     /// creates a deadline from the given timeout
-    pub fn deadline(&self) -> Option<NaiveTime> {
+    #[cfg(target_arch = "wasm32")]
+    pub fn deadline(&self) -> Option<Time> {
         self.timeout()
             .and_then(|t| Utc::now().checked_add_signed(TimeDelta::milliseconds(t)))
             .map(|t| t.time())
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn deadline(&self) -> Option<Time> {
+        self.timeout()
+            .and_then(|t| Instant::now().checked_add(Duration::from_millis(t as u64)))
     }
 
     // returns configured match_threshold
@@ -228,7 +243,7 @@ impl DiffMatchPatch {
         old_bytes: &'a [T],
         new_bytes: &'a [T],
         linemode: bool,
-        deadline: Option<NaiveTime>,
+        deadline: Option<Time>,
     ) -> Result<Vec<Diff<T>>, crate::errors::Error> {
         // First, check if lhs and rhs are equal
         if old_bytes == new_bytes {
@@ -286,7 +301,7 @@ impl DiffMatchPatch {
         old: &'a [T],
         new: &'a [T],
         linemode: bool,
-        deadline: Option<NaiveTime>,
+        deadline: Option<Time>,
     ) -> Result<Vec<Diff<T>>, crate::errors::Error> {
         // returning all of the new part
         if old.is_empty() {
@@ -432,7 +447,7 @@ impl DiffMatchPatch {
         &self,
         old: &'a [T],
         new: &'a [T],
-        deadline: Option<NaiveTime>,
+        deadline: Option<Time>,
     ) -> Result<Vec<Diff<T>>, crate::errors::Error> {
         let mut diffs = {
             let to_chars = Self::lines_to_chars(old, new);
@@ -512,7 +527,7 @@ impl DiffMatchPatch {
         &self,
         old: &'a [usize],
         new: &'a [usize],
-        deadline: Option<NaiveTime>,
+        deadline: Option<Time>,
     ) -> Result<Vec<Diff<usize>>, crate::errors::Error> {
         if old == new {
             if old.is_empty() {
@@ -557,7 +572,7 @@ impl DiffMatchPatch {
         &self,
         old: &'a [usize],
         new: &'a [usize],
-        deadline: Option<NaiveTime>,
+        deadline: Option<Time>,
     ) -> Result<Vec<Diff<usize>>, crate::errors::Error> {
         // returning all of the new part
         if old.is_empty() {
@@ -637,7 +652,7 @@ impl DiffMatchPatch {
         &self,
         old: &'a [T],
         new: &'a [T],
-        deadline: Option<NaiveTime>,
+        deadline: Option<Time>,
     ) -> Result<Vec<Diff<T>>, crate::errors::Error> {
         // let text1_length = old.len() as isize;
         // let text2_length = new.len() as isize;
@@ -669,7 +684,12 @@ impl DiffMatchPatch {
         for d in 0..max_d {
             // Bail out if deadline is reached.
             if let Some(tout) = deadline {
+                #[cfg(target_arch = "wasm32")]
                 if Utc::now().time() > tout {
+                    break;
+                }
+                #[cfg(not(target_arch = "wasm32"))]
+                if Instant::now() > tout {
                     break;
                 }
             }
