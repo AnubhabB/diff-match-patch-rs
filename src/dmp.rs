@@ -2355,7 +2355,7 @@ impl DiffMatchPatch {
 
         // patches.iter().enumerate().for_each(|(x, p)| {
         for (x, p) in patches.iter().enumerate() {
-            let expected_loc = p.start2 + delta as usize;
+            let expected_loc = (p.start2 as isize + delta) as usize;
             let txt_old = Self::diff_text_old(&p.diffs);
             let (start_loc, end_loc) = if txt_old.len() > self.match_max_bits() {
                 // patch_splitMax will only provide an oversized pattern in the case of
@@ -2385,15 +2385,15 @@ impl DiffMatchPatch {
             if let Some(sl) = start_loc {
                 // Found a match.  :)
                 results[x] = true;
-                println!("{sl} {expected_loc}");
-                delta = (sl - expected_loc) as isize;
+                delta = sl as isize - expected_loc as isize;
 
-                let txt_new = if let Some(el) = end_loc {
-                    // safeMid(text, start_loc, end_loc + Match_MaxBits - start_loc);
-                    &source[sl..el + self.match_max_bits()]
+                let trg_idx = if let Some(el) = end_loc {
+                    el + self.match_max_bits()
                 } else {
-                    &source[sl..sl + txt_old.len()]
+                    sl + txt_old.len()
                 };
+
+                let txt_new = &source[sl..trg_idx.min(source.len())];
 
                 if txt_old == txt_new {
                     // Perfect match, just shove the replacement text in.

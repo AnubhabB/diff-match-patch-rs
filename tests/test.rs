@@ -1302,7 +1302,6 @@ fn test_patch_apply() -> Result<(), Error> {
     // Tests for issue https://github.com/AnubhabB/diff-match-patch-rs/issues/2
     let strp = "@@ -1,11 +1,5 @@\n-%F0%9F%8D%8A, a\n+A\n ah o\n@@ -3,17 +3,21 @@\n h orange\n- \n+!%F0%9F%8C%8A\n is the n\n@@ -23,10 +23,8 @@\n new \n-black!\n+%F0%9F%8C%8A\n";
     let patches = dmp.patch_from_text::<Compat>(strp)?;
-    println!("{patches:?}");
     assert_eq!(strp, dmp.patch_to_text(&patches));
     let (patched, _) = dmp.patch_apply(&patches, "🍊, aah orange is the new black!")?;
     assert_eq!(patched, "Aah orange!🌊is the new 🌊");
