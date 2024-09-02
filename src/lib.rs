@@ -1,13 +1,13 @@
 //! # Efficient port of Google's diff-match-patch implemented in Rust
-//! 
+//!
 //! [<img alt="github" src="https://img.shields.io/badge/github-Anubhab/diff_match_patch_rs-8da0cb?style=for-the-badge&labelColor=555555&logo=github" height="20">](https://github.com/AnubhabB/diff-match-patch-rs)
 //! [<img alt="crates.io" src="https://img.shields.io/crates/v/diff-match-patch-rs" height="20">](https://crates.io/crates/diff-match-patch-rs)
 //! [<img alt="docs.rs" src="https://img.shields.io/badge/docs.rs-diff_match_patch_rs?style=for-the-badge&logo=docs.rs&labelColor=%23555555" height="20">](https://docs.rs/diff-match-patch-rs)
-//! 
-//! 
+//!
+//!
 //! A very **fast**, **accurate** and **wasm ready** port of [Diff Match Patch](https://github.com/dmsnell/diff-match-patch) in Rust. The
 //! diff implementation is based on [Myers' diff algorithm](https://neil.fraser.name/writing/diff/myers.pdf).
-//! 
+//!
 //! ## Highlights of this crate
 //! - Exposes two modes of operating with `diff-match-patch`, a `Efficient` mode and `Compat` mode. While the `Efficient` mode squeezes out the max performance the `Compat` mode ensures compatibility across other libraries or implementations (rust or otherwise). According to [Benchmarks](#benchmarks), our slower `Compat` mode is still faster than other implementations in rust.
 //!     - **`Efficient`** mode works on `&[u8]` and the generated diffs break compatibility with other implementation. Use the **`Efficient`** mode ONLY if you are using this [crate](https://crates.io/crates/diff-match-patch-rs) at the source of diff generation and the destination.
@@ -23,7 +23,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! diff-match-patch-rs = "0.1.0-beta.3"
+//! diff-match-patch-rs = "0.2.0"
 //! ```
 //!
 //! ### `Effitient` mode
@@ -162,19 +162,20 @@
 //! | Lang.   | Library                                                                                  | Diff Avg. | Patch Avg. | Bencher    | Mode        | Correct |
 //! |:-------:|:----------------------------------------------------------------------------------------:|:---------:|:----------:|:----------:|:-----------:|:-------:|
 //! | `rust`  | [diff_match_patch v0.1.1](https://crates.io/crates/diff_match_patch)[^2]                 | 68.108 ms | 10.596 ms | Criterion   | -           |    ✅   |
-//! | `rust`  | [diffmatchpatch v0.0.4](https://crates.io/crates/diffmatchpatch)[^3]                     | 66.454 ms | -         | Criterion   | -           |    ❌   |
 //! | `rust`  | [dmp v0.2.0](https://crates.io/crates/dmp)                                               | 69.019 ms | 14.654 ms | Criterion   | -           |    ✅   |
-//! | `rust`  | [diff-match-patch-rs](https://github.com/AnubhabB/diff-match-patch-rs.git)<sup>our</sup> | 65.487 ms | 631.13 µs | Criterion   | `Efficient` |    ✅   |
-//! | `rust`  | [diff-match-patch-rs](https://github.com/AnubhabB/diff-match-patch-rs.git)<sup>our</sup> | 65.642 ms | 1.1703 ms | Criterion   | `Compat`    |    ✅   |
-//! | `go`    | [go-diff](https://github.com/sergi/go-diff)[^1]                                  | 50.31 ms  | 135.2 ms  | go test     | -           |    ❌   |
+//! | `rust`  | [diff-match-patch-rs](https://github.com/AnubhabB/diff-match-patch-rs.git)<sup>our</sup> | 64.66 ms  | 631.13 µs | Criterion   | `Efficient` |    ✅   |
+//! | `rust`  | [diff-match-patch-rs](https://github.com/AnubhabB/diff-match-patch-rs.git)<sup>our</sup> | 64.68 ms  | 1.1703 ms | Criterion   | `Compat`    |    ✅   |
+//! | `go`    | [go-diff](https://github.com/sergi/go-diff)[^1]                                          | 50.31 ms  | 135.2 ms  | go test     | -           |    ❌   |
 //! | `node`  | [diff-match-patch](https://www.npmjs.com/package/diff-match-patch)                       | 246.90 ms | 1.07 ms   | tinybench   | -           |    ✅   |
 //! | `python`| [diff-match-patch](https://pypi.org/project/diff-match-patch/)                           | 1.01 s    | 0.25 ms   | timeit      | -           |    ✅   |
 //!
 //!
-//! [^1]: [go-diff](https://github.com/sergi/go-diff) seems to generate wrong diffs for emoticons. This benchmark is on the text with the emoticons removed.
-//! [^2]: Adds an extra clone to the iterator because the `patch_apply` method takes mutable refc. to `diffs`.
-//! [^3]: The crate [diffmatchpatch v0.0.4](https://crates.io/crates/diffmatchpatch) is still a WIP, cound't find the `patch_apply` method.
+//! ## Gotchas
+//! **Diff incompatibility with `JavaScript` libs**:
 //!
+//! There are 2 kinds of implementations - one which use a `postprocessing` function for merging `unicode surrogates` which break compatibility with every other popular `diff-match-patch` implementations and the other kind (packages based on the original implementation) break while `urlEncode()` of unicode surrogates.
+//! As of now, this crate brakes compatibility while working with `JS` generated diffs with the surrogate patch.
+//! If you are interfacing with `JavaScript` in browser, using this crate through `wasm` would be ideal.
 //!
 
 pub mod dmp;

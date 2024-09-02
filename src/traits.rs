@@ -1,10 +1,9 @@
 use std::hash::Hash;
 
-use chrono::NaiveTime;
 use percent_encoding::{percent_decode, AsciiSet, CONTROLS};
 
 use crate::{
-    dmp::{Diff, DiffMatchPatch},
+    dmp::{Diff, DiffMatchPatch, Time},
     Ops,
 };
 
@@ -34,7 +33,7 @@ pub trait DType: Copy + Ord + Eq + Hash {
         new: &[Self],
         x: usize,
         y: usize,
-        deadline: Option<NaiveTime>,
+        deadline: Option<Time>,
     ) -> Result<Vec<Diff<Self>>, crate::errors::Error>;
 
     fn from_char(c: char) -> Self;
@@ -60,7 +59,7 @@ impl DType for u8 {
         new: &[u8],
         x: usize,
         y: usize,
-        deadline: Option<NaiveTime>,
+        deadline: Option<Time>,
     ) -> Result<Vec<Diff<u8>>, crate::errors::Error> {
         let old_a = &old[..x];
         let new_a = &new[..y];
@@ -221,7 +220,7 @@ impl DType for char {
         new: &[char],
         x: usize,
         y: usize,
-        deadline: Option<NaiveTime>,
+        deadline: Option<Time>,
     ) -> Result<Vec<Diff<char>>, crate::errors::Error> {
         let old_a = &old[..x];
         let new_a = &new[..y];
@@ -302,7 +301,7 @@ impl DType for usize {
         new: &[usize],
         x: usize,
         y: usize,
-        deadline: Option<NaiveTime>,
+        deadline: Option<Time>,
     ) -> Result<Vec<Diff<usize>>, crate::errors::Error> {
         let old_a = &old[..x];
         let new_a = &new[..y];

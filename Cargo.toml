@@ -1,8 +1,9 @@
 [package]
 name = "diff-match-patch-rs"
-version = "0.1.0-beta.4"
+version = "0.2.0"
 edition = "2021"
 authors = ["Anubhab Bandyopadhyay"]
+homepage   = "https://docs.rs/diff-match-patch-rs"
 repository = "https://github.com/AnubhabB/diff-match-patch-rs.git"
 description = "A high-performance port of Myer's diff algorithm to perform the operations required for synchronizing plain text."
 readme = "README.md"
@@ -11,11 +12,19 @@ keywords = ["diff", "match", "patch", "text-synchronization"]
 categories = ["algorithms", "text-processing", "text-editors", "wasm"]
 
 [dependencies]
-chrono           = "0"
 percent-encoding = "2"
 
+[target_arch.'cfg(wasm32-unknown-unknown)'.dependencies]
+chrono = "0"
+
 [package.metadata.docs.rs]
-targets = ["x86_64-unknown-linux-gnu", "wasm32-unknown-unknown"]
+targets = [
+    "aarch64-unknown-linux-gnu",
+    "aarch64-apple-darwin",
+    "x86_64-unknown-linux-gnu",
+    "x86_64-apple-darwin",
+    "wasm32-unknown-unknown"
+]
 rustdoc-args = ["--generate-link-to-definition"]
 
 [[example]]

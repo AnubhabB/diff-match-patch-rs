@@ -1,7 +1,15 @@
 use core::str;
 use std::{char, collections::HashMap, fmt::Display};
 
+#[cfg(target_arch = "wasm32")]
 use chrono::{NaiveTime, TimeDelta, Utc};
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::{Duration, Instant};
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) type Time = NaiveTime;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) type Time = Instant;
 
 use crate::{errors::Error, html::HtmlConfig, DType, PatchInput};
 
@@ -166,10 +174,17 @@ impl DiffMatchPatch {
     }
 
     /// creates a deadline from the given timeout
-    pub fn deadline(&self) -> Option<NaiveTime> {
+    #[cfg(target_arch = "wasm32")]
+    pub fn deadline(&self) -> Option<Time> {
         self.timeout()
             .and_then(|t| Utc::now().checked_add_signed(TimeDelta::milliseconds(t)))
             .map(|t| t.time())
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn deadline(&self) -> Option<Time> {
+        self.timeout()
+            .and_then(|t| Instant::now().checked_add(Duration::from_millis(t as u64)))
     }
 
     // returns configured match_threshold
@@ -228,7 +243,7 @@ impl DiffMatchPatch {
         old_bytes: &'a [T],
         new_bytes: &'a [T],
         linemode: bool,
-        deadline: Option<NaiveTime>,
+        deadline: Option<Time>,
     ) -> Result<Vec<Diff<T>>, crate::errors::Error> {
         // First, check if lhs and rhs are equal
         if old_bytes == new_bytes {
@@ -286,7 +301,7 @@ impl DiffMatchPatch {
         old: &'a [T],
         new: &'a [T],
         linemode: bool,
-        deadline: Option<NaiveTime>,
+        deadline: Option<Time>,
     ) -> Result<Vec<Diff<T>>, crate::errors::Error> {
         // returning all of the new part
         if old.is_empty() {
@@ -432,7 +447,7 @@ impl DiffMatchPatch {
         &self,
         old: &'a [T],
         new: &'a [T],
-        deadline: Option<NaiveTime>,
+        deadline: Option<Time>,
     ) -> Result<Vec<Diff<T>>, crate::errors::Error> {
         let mut diffs = {
             let to_chars = Self::lines_to_chars(old, new);
@@ -512,7 +527,7 @@ impl DiffMatchPatch {
         &self,
         old: &'a [usize],
         new: &'a [usize],
-        deadline: Option<NaiveTime>,
+        deadline: Option<Time>,
     ) -> Result<Vec<Diff<usize>>, crate::errors::Error> {
         if old == new {
             if old.is_empty() {
@@ -557,7 +572,7 @@ impl DiffMatchPatch {
         &self,
         old: &'a [usize],
         new: &'a [usize],
-        deadline: Option<NaiveTime>,
+        deadline: Option<Time>,
     ) -> Result<Vec<Diff<usize>>, crate::errors::Error> {
         // returning all of the new part
         if old.is_empty() {
@@ -637,7 +652,7 @@ impl DiffMatchPatch {
         &self,
         old: &'a [T],
         new: &'a [T],
-        deadline: Option<NaiveTime>,
+        deadline: Option<Time>,
     ) -> Result<Vec<Diff<T>>, crate::errors::Error> {
         // let text1_length = old.len() as isize;
         // let text2_length = new.len() as isize;
@@ -669,7 +684,12 @@ impl DiffMatchPatch {
         for d in 0..max_d {
             // Bail out if deadline is reached.
             if let Some(tout) = deadline {
+                #[cfg(target_arch = "wasm32")]
                 if Utc::now().time() > tout {
+                    break;
+                }
+                #[cfg(not(target_arch = "wasm32"))]
+                if Instant::now() > tout {
                     break;
                 }
             }
@@ -2350,12 +2370,12 @@ impl DiffMatchPatch {
         // of the previous patch.  If there are patches expected at positions 10 and
         // 20, but the first patch was found at 12, delta is 2 and the second patch
         // has an effective expected position of 22.
-        let mut delta = 0;
+        let mut delta = 0_isize;
         let mut results = vec![false; patches.len()];
 
         // patches.iter().enumerate().for_each(|(x, p)| {
         for (x, p) in patches.iter().enumerate() {
-            let expected_loc = p.start2 + delta;
+            let expected_loc = (p.start2 as isize + delta) as usize;
             let txt_old = Self::diff_text_old(&p.diffs);
             let (start_loc, end_loc) = if txt_old.len() > self.match_max_bits() {
                 // patch_splitMax will only provide an oversized pattern in the case of
@@ -2385,14 +2405,15 @@ impl DiffMatchPatch {
             if let Some(sl) = start_loc {
                 // Found a match.  :)
                 results[x] = true;
-                delta = sl - expected_loc;
+                delta = sl as isize - expected_loc as isize;
 
-                let txt_new = if let Some(el) = end_loc {
-                    // safeMid(text, start_loc, end_loc + Match_MaxBits - start_loc);
-                    &source[sl..el + self.match_max_bits()]
+                let trg_idx = if let Some(el) = end_loc {
+                    el + self.match_max_bits()
                 } else {
-                    &source[sl..sl + txt_old.len()]
+                    sl + txt_old.len()
                 };
+
+                let txt_new = &source[sl..trg_idx.min(source.len())];
 
                 if txt_old == txt_new {
                     // Perfect match, just shove the replacement text in.
@@ -2442,7 +2463,7 @@ impl DiffMatchPatch {
                 // No match found.  :(
                 results[x] = false;
                 // Subtract the delta for this failed patch from subsequent patches.
-                delta -= p.length2 - p.length1;
+                delta -= (p.length2 - p.length1) as isize;
             }
         }
 
