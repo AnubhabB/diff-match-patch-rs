@@ -163,12 +163,12 @@ Benchmarks are maintained [diff-match-patch-bench repository](https://github.com
 | `rust`  | [dmp v0.2.0](https://crates.io/crates/dmp)                                               | 69.019 ms | 14.654 ms | Criterion   | -           |    ✅   |
 | `rust`  | [diff-match-patch-rs](https://github.com/AnubhabB/diff-match-patch-rs.git)<sup>our</sup> | 64.66 ms  | 631.13 µs | Criterion   | `Efficient` |    ✅   |
 | `rust`  | [diff-match-patch-rs](https://github.com/AnubhabB/diff-match-patch-rs.git)<sup>our</sup> | 64.68 ms  | 1.1703 ms | Criterion   | `Compat`    |    ✅   |
-| `go`    | [go-diff](https://github.com/sergi/go-diff)[^1]                                          | 50.31 ms  | 135.2 ms  | go test     | -           |    ❌   |
-| `node`  | [diff-match-patch](https://www.npmjs.com/package/diff-match-patch)                       | 246.90 ms | 1.07 ms   | tinybench   | -           |    ✅   |
+| `go`    | [go-diff](https://github.com/sergi/go-diff)                                              | 50.31 ms  | 135.2 ms  | go test     | -           |    ✅   |
+| `node`  | [diff-match-patch](https://www.npmjs.com/package/diff-match-patch)[^1]                   | 246.90 ms | 1.07 ms   | tinybench   | -           |    ❌   |
 | `python`| [diff-match-patch](https://pypi.org/project/diff-match-patch/)                           | 1.01 s    | 0.25 ms   | timeit      | -           |    ✅   |
 
 
-[^1]: [go-diff](https://github.com/sergi/go-diff) seems to generate wrong diffs for emoticons. This benchmark is on the text with the emoticons removed.
+[^1]: [diff-match-patch](https://www.npmjs.com/package/diff-match-patch) generated `patch text` and `delta` breaks on `unicode surrogates`.
 [^2]: Adds an extra clone to the iterator because the `patch_apply` method takes mutable refc. to `diffs`.
 
 ## Gotchas
