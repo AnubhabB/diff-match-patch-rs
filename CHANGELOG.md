@@ -1,5 +1,10 @@
 # CHANGELOG.md
 
+## 0.2.1
+Fix:
+
+    - fixed bug in optional dependency `chrono` based on target `wasm32-unknown-unknown`
+
 ## 0.2.0
 
 Features:

@@ -23,7 +23,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! diff-match-patch-rs = "0.2.0"
+//! diff-match-patch-rs = "0.2.1"
 //! ```
 //!
 //! ### `Effitient` mode

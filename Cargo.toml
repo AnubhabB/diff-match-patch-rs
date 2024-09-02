@@ -1,6 +1,6 @@
 [package]
 name = "diff-match-patch-rs"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 authors = ["Anubhab Bandyopadhyay"]
 homepage   = "https://docs.rs/diff-match-patch-rs"
@@ -14,7 +14,7 @@ categories = ["algorithms", "text-processing", "text-editors", "wasm"]
 [dependencies]
 percent-encoding = "2"
 
-[target_arch.'cfg(wasm32-unknown-unknown)'.dependencies]
+[target.wasm32-unknown-unknown.dependencies]
 chrono = "0"
 
 [package.metadata.docs.rs]
