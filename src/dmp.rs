@@ -2773,9 +2773,28 @@ impl DiffMatchPatch {
     /// If `match_threshold` is closer to 1 then it is more likely that a match will be found.
     /// The larger `match_threshold` is, the slower match_main() may take to compute. `match_threshold` defaults to 0.5 and can be updated by `dmp.set_match_threshold()` method.
     ///
-    /// If no match is found, the function returns -1.
-    pub fn match_main(&self, text: &str, pattern: &str, loc: usize) -> Option<usize> {
-        self.match_internal(text.as_bytes(), pattern.as_bytes(), loc)
+    /// If no match is found, the function returns `None`
+    ///
+    /// # Examle
+    /// ```
+    /// # use diff_match_patch_rs::{DiffMatchPatch, Error, Efficient};
+    ///
+    /// # fn main() {
+    /// let dmp = DiffMatchPatch::new();
+    /// // Works with both `Compat` and `Efficient` modes
+    /// let matched = dmp.match_main::<Efficient>(
+    ///     "I am the very model of a modern major general.",
+    ///     " that berry ",
+    ///     5
+    /// );
+    ///
+    /// # assert_eq!(matched, Some(4));
+    /// # }
+    /// ```
+    pub fn match_main<T: DType>(&self, text: &str, pattern: &str, loc: usize) -> Option<usize> {
+        let text = T::from_str(text);
+        let pattern = T::from_str(pattern);
+        self.match_internal(&text, &pattern, loc)
     }
 
     /// Given two texts, or an already computed list of differences (`diffs`), return an array of patch objects.

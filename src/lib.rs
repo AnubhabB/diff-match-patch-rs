@@ -146,6 +146,25 @@
 //!     at_destination(&patches)
 //! }
 //! ```
+//! ### `Match` - fuzzy match of pattern in Text
+//!
+//! ```rust
+//! use diff_match_patch_rs::{DiffMatchPatch, Compat, Error, PatchInput};
+//! // This is the source text
+//! const TXT: &str = "I am the very model of a modern Major-General, I've information on vegetable, animal, and mineral, 🚀👏👀";
+//!
+//! // The patter we are trying to fing
+//! const PATTERN: &str = " that berry ";
+//!
+//! // Returns `location` of match if found, `None` if not found
+//! fn main() -> Option<usize> {
+//! let dmp = DiffMatchPatch::new();
+//!
+//! // works with both `Efficient` and `Compat` modes
+//! // `5` here is an approx location to find `nearby` matches
+//! dmp.match_main::<Efficient>(TXT, PATTERN, 5) // this should return Some(4)
+//! }
+//! ```
 //!
 //! #### Note
 //! The `Efficient` and `Compat` mode APIs are identical with the only chage being the `generic` parameter declared during the calls.
