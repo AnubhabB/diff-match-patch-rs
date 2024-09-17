@@ -1312,21 +1312,45 @@ fn test_match_main() {
     let dmp = DiffMatchPatch::default();
     // Full match.
     // Shortcut matches.
-    assert_eq!(Some(0), dmp.match_main("abcdef", "abcdef", 1000));
-    assert_eq!(None, dmp.match_main("", "abcdef", 1));
-    assert_eq!(Some(3), dmp.match_main("abcdef", "", 3));
-    assert_eq!(Some(3), dmp.match_main("abcdef", "de", 3));
+    assert_eq!(
+        Some(0),
+        dmp.match_main::<Efficient>("abcdef", "abcdef", 1000)
+    );
+    assert_eq!(None, dmp.match_main::<Efficient>("", "abcdef", 1));
+    assert_eq!(Some(3), dmp.match_main::<Efficient>("abcdef", "", 3));
+    assert_eq!(Some(3), dmp.match_main::<Efficient>("abcdef", "de", 3));
 
     // Beyond end match.
-    assert_eq!(Some(3), dmp.match_main("abcdef", "defy", 4));
+    assert_eq!(Some(3), dmp.match_main::<Efficient>("abcdef", "defy", 4));
 
     // Oversized pattern.
-    assert_eq!(Some(0), dmp.match_main("abcdef", "abcdefy", 0));
+    assert_eq!(Some(0), dmp.match_main::<Efficient>("abcdef", "abcdefy", 0));
 
     // Complex match.
     assert_eq!(
         Some(4),
-        dmp.match_main(
+        dmp.match_main::<Efficient>(
+            "I am the very model of a modern major general.",
+            " that berry ",
+            5
+        )
+    );
+
+    assert_eq!(Some(0), dmp.match_main::<Compat>("abcdef", "abcdef", 1000));
+    assert_eq!(None, dmp.match_main::<Compat>("", "abcdef", 1));
+    assert_eq!(Some(3), dmp.match_main::<Compat>("abcdef", "", 3));
+    assert_eq!(Some(3), dmp.match_main::<Compat>("abcdef", "de", 3));
+
+    // Beyond end match.
+    assert_eq!(Some(3), dmp.match_main::<Compat>("abcdef", "defy", 4));
+
+    // Oversized pattern.
+    assert_eq!(Some(0), dmp.match_main::<Compat>("abcdef", "abcdefy", 0));
+
+    // Complex match.
+    assert_eq!(
+        Some(4),
+        dmp.match_main::<Compat>(
             "I am the very model of a modern major general.",
             " that berry ",
             5

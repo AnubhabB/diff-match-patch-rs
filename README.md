@@ -21,7 +21,7 @@ A very **fast**, **accurate** and **wasm ready** port of [Diff Match Patch](http
 
 ```toml
 [dependencies]
-diff-match-patch-rs = "0.2.1"
+diff-match-patch-rs = "0.3.0"
 ```
 
 ### `Effitient` mode
@@ -142,6 +142,27 @@ fn main() -> Result<(), Error> {
     // We'll send this diff to some destination e.g. db or the client where these changes are going to be applied
     // The destination will receive the patch string and will apply the patches to recreate the edits
     at_destination(&patches)
+}
+```
+
+### `Match` - fuzzy match of pattern in Text
+
+```rust
+use diff_match_patch_rs::{DiffMatchPatch, Compat, Error, PatchInput};
+
+// This is the source text
+const TXT: &str = "I am the very model of a modern Major-General, I've information on vegetable, animal, and mineral, 🚀👏👀";
+
+// The patter we are trying to fing
+const PATTERN: &str = " that berry ";
+
+// Returns `location` of match if found, `None` if not found
+fn main() -> Option<usize> {
+    let dmp = DiffMatchPatch::new();
+    
+    // works with both `Efficient` and `Compat` modes
+    // `5` here is an approx location to find `nearby` matches
+    dmp.match_main::<Efficient>(TXT, PATTERN, 5) // this should return Some(4)
 }
 ```
 
