@@ -2028,13 +2028,6 @@ impl DiffMatchPatch {
 
         accuracy + proximity as f32 / self.match_distance() as f32
     }
-
-    // Experimental `match` implementation based on 
-    // https://github.com/robertknight/approx-string-match-js
-    fn match_bit_vec<T: DType>(&self, text: &[T], pattern: &[T], loc: usize) -> Option<()> {
-        
-        Some(())
-    }
 }
 
 // Patch Methods
