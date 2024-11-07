@@ -1,5 +1,11 @@
 # CHANGELOG.md
 
+## 0.3.1
+
+Fix:
+
+    - Fixing order of Ops definition [Issue](https://github.com/AnubhabB/diff-match-patch-rs/issues/5)
+
 ## 0.3.0
 Breaking Change:
 

@@ -17,8 +17,8 @@ use crate::{errors::Error, html::HtmlConfig, DType, PatchInput};
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum Ops {
     Delete = -1,
-    Insert,
     Equal,
+    Insert,
 }
 
 /// A structure representing a diff
