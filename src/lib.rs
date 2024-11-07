@@ -23,7 +23,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! diff-match-patch-rs = "0.2.1"
+//! diff-match-patch-rs = "0.3.0"
 //! ```
 //!
 //! ### `Effitient` mode
@@ -146,6 +146,25 @@
 //!     at_destination(&patches)
 //! }
 //! ```
+//! ### `Match` - fuzzy match of pattern in Text
+//!
+//! ```rust
+//! use diff_match_patch_rs::{DiffMatchPatch, Compat, Error, PatchInput};
+//! // This is the source text
+//! const TXT: &str = "I am the very model of a modern Major-General, I've information on vegetable, animal, and mineral, 🚀👏👀";
+//!
+//! // The patter we are trying to fing
+//! const PATTERN: &str = " that berry ";
+//!
+//! // Returns `location` of match if found, `None` if not found
+//! fn main() -> Option<usize> {
+//! let dmp = DiffMatchPatch::new();
+//!
+//! // works with both `Efficient` and `Compat` modes
+//! // `5` here is an approx location to find `nearby` matches
+//! dmp.match_main::<Efficient>(TXT, PATTERN, 5) // this should return Some(4)
+//! }
+//! ```
 //!
 //! #### Note
 //! The `Efficient` and `Compat` mode APIs are identical with the only chage being the `generic` parameter declared during the calls.
@@ -161,13 +180,13 @@
 //!
 //! | Lang.   | Library                                                                                  | Diff Avg. | Patch Avg. | Bencher    | Mode        | Correct |
 //! |:-------:|:----------------------------------------------------------------------------------------:|:---------:|:----------:|:----------:|:-----------:|:-------:|
-//! | `rust`  | [diff_match_patch v0.1.1](https://crates.io/crates/diff_match_patch)[^2]                 | 68.108 ms | 10.596 ms | Criterion   | -           |    ✅   |
-//! | `rust`  | [dmp v0.2.0](https://crates.io/crates/dmp)                                               | 69.019 ms | 14.654 ms | Criterion   | -           |    ✅   |
-//! | `rust`  | [diff-match-patch-rs](https://github.com/AnubhabB/diff-match-patch-rs.git)<sup>our</sup> | 64.66 ms  | 631.13 µs | Criterion   | `Efficient` |    ✅   |
-//! | `rust`  | [diff-match-patch-rs](https://github.com/AnubhabB/diff-match-patch-rs.git)<sup>our</sup> | 64.68 ms  | 1.1703 ms | Criterion   | `Compat`    |    ✅   |
-//! | `go`    | [go-diff](https://github.com/sergi/go-diff)                                              | 50.31 ms  | 135.2 ms  | go test     | -           |    ✅   |
-//! | `node`  | [diff-match-patch](https://www.npmjs.com/package/diff-match-patch)[^1]                   | 246.90 ms | 1.07 ms   | tinybench   | -           |    ❌   |
-//! | `python`| [diff-match-patch](https://pypi.org/project/diff-match-patch/)                           | 1.01 s    | 0.25 ms   | timeit      | -           |    ✅   |
+//! | `rust`  | [diff_match_patch v0.1.1](https://crates.io/crates/diff_match_patch)[^2]                 | 68.108 ms | 10.596 ms  | Criterion  | -           |    ✅   |
+//! | `rust`  | [dmp v0.2.0](https://crates.io/crates/dmp)                                               | 69.019 ms | 14.654 ms  | Criterion  | -           |    ✅   |
+//! | `rust`  | [diff-match-patch-rs](https://github.com/AnubhabB/diff-match-patch-rs.git)<sup>our</sup> | 64.66 ms  | 631.13 µs  | Criterion  | `Efficient` |    ✅   |
+//! | `rust`  | [diff-match-patch-rs](https://github.com/AnubhabB/diff-match-patch-rs.git)<sup>our</sup> | 64.68 ms  | 1.1703 ms  | Criterion  | `Compat`    |    ✅   |
+//! | `go`    | [go-diff](https://github.com/sergi/go-diff)                                              | 50.31 ms  | 135.2 ms   | go test    | -           |    ✅   |
+//! | `node`  | [diff-match-patch](https://www.npmjs.com/package/diff-match-patch)[^1]                   | 246.90 ms | 1.07 ms    | tinybench  | -           |    ❌   |
+//! | `python`| [diff-match-patch](https://pypi.org/project/diff-match-patch/)                           | 1.01 s    | 0.25 ms    | timeit     | -           |    ✅   |
 //!
 //! [^1]: [diff-match-patch](https://www.npmjs.com/package/diff-match-patch) generated `patch text` and `delta` breaks on `unicode surrogates`.
 //! [^2]: Adds an extra clone to the iterator because the `patch_apply` method takes mutable refc. to `diffs`.

@@ -1,5 +1,10 @@
 # CHANGELOG.md
 
+## 0.3.0
+Breaking Change:
+
+    - the `match_main` API now supports `Efficient` and `Compat` modes. The call to `match_main` is now `match_main::<Efficient>` or `match_main::<Compat>` depending on your use-case
+
 ## 0.2.1
 Fix:
 
