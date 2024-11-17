@@ -23,7 +23,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! diff-match-patch-rs = "0.3.0"
+//! diff-match-patch-rs = "0.3.2"
 //! ```
 //!
 //! ### `Effitient` mode
@@ -149,7 +149,7 @@
 //! ### `Match` - fuzzy match of pattern in Text
 //!
 //! ```rust
-//! use diff_match_patch_rs::{DiffMatchPatch, Compat, Error, PatchInput};
+//! use diff_match_patch_rs::{DiffMatchPatch, Efficient, Error, PatchInput};
 //! // This is the source text
 //! const TXT: &str = "I am the very model of a modern Major-General, I've information on vegetable, animal, and mineral, 🚀👏👀";
 //!
@@ -157,12 +157,13 @@
 //! const PATTERN: &str = " that berry ";
 //!
 //! // Returns `location` of match if found, `None` if not found
-//! fn main() -> Option<usize> {
-//! let dmp = DiffMatchPatch::new();
+//! fn main() {
+//!     let dmp = DiffMatchPatch::new();
 //!
-//! // works with both `Efficient` and `Compat` modes
-//! // `5` here is an approx location to find `nearby` matches
-//! dmp.match_main::<Efficient>(TXT, PATTERN, 5) // this should return Some(4)
+//!     // works with both `Efficient` and `Compat` modes
+//!     // `5` here is an approx location to find `nearby` matches
+//!     let res = dmp.match_main::<Efficient>(TXT, PATTERN, 5);
+//!     println!("{:?}", res); // Should print `Some(4)`
 //! }
 //! ```
 //!

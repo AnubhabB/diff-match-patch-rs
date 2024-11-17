@@ -1,5 +1,11 @@
 # CHANGELOG.md
 
+## 0.3.2
+
+Fix:
+
+    - Minor fix for [Issue](https://github.com/AnubhabB/diff-match-patch-rs/issues/7)
+
 ## 0.3.1
 
 Fix:
