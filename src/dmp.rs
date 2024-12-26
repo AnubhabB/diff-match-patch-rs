@@ -240,55 +240,49 @@ impl DiffMatchPatch {
 
     pub(crate) fn diff_internal<'a, T: DType>(
         &self,
-        old_bytes: &'a [T],
-        new_bytes: &'a [T],
+        old_t: &'a [T],
+        new_t: &'a [T],
         linemode: bool,
         deadline: Option<Time>,
     ) -> Result<Vec<Diff<T>>, crate::errors::Error> {
         // First, check if lhs and rhs are equal
-        if old_bytes == new_bytes {
-            if old_bytes.is_empty() {
+        if old_t == new_t {
+            if old_t.is_empty() {
                 return Ok(Vec::new());
             }
 
-            return Ok(vec![Diff::equal(old_bytes)]);
+            return Ok(vec![Diff::equal(old_t)]);
         }
 
-        if old_bytes.is_empty() {
-            return Ok(vec![Diff::insert(new_bytes)]);
+        if old_t.is_empty() {
+            return Ok(vec![Diff::insert(new_t)]);
         }
 
-        if new_bytes.is_empty() {
-            return Ok(vec![Diff::delete(old_bytes)]);
+        if new_t.is_empty() {
+            return Ok(vec![Diff::delete(old_t)]);
         }
 
         // Trim common prefix
-        let common_prefix = Self::common_prefix(old_bytes, new_bytes, false);
-        let common_suffix = Self::common_prefix(
-            &old_bytes[common_prefix..],
-            &new_bytes[common_prefix..],
-            true,
-        );
+        let common_prefix = Self::common_prefix(old_t, new_t, false);
+        let common_suffix =
+            Self::common_prefix(&old_t[common_prefix..], &new_t[common_prefix..], true);
 
         let mut diffs = self.compute(
-            &old_bytes[common_prefix..old_bytes.len() - common_suffix],
-            &new_bytes[common_prefix..new_bytes.len() - common_suffix],
+            &old_t[common_prefix..old_t.len() - common_suffix],
+            &new_t[common_prefix..new_t.len() - common_suffix],
             linemode,
             deadline,
         )?;
 
         // Restore the prefix and suffix.
         if common_prefix > 0 {
-            let mut d = vec![Diff::equal(&old_bytes[..common_prefix])];
+            let mut d = vec![Diff::equal(&old_t[..common_prefix])];
             d.append(&mut diffs);
             diffs = d;
         }
 
         if common_suffix > 0 {
-            diffs.push(Diff::new(
-                Ops::Equal,
-                &new_bytes[new_bytes.len() - common_suffix..],
-            ));
+            diffs.push(Diff::new(Ops::Equal, &new_t[new_t.len() - common_suffix..]));
         }
 
         Self::cleanup_merge(&mut diffs);
@@ -1980,7 +1974,7 @@ impl DiffMatchPatch {
                         best_loc = Some(bst_loc);
                         if bst_loc > loc {
                             // When passing loc, don't exceed our current distance from loc.
-                            start = 1.max(if loc > bst_loc { loc - bst_loc } else { 0 });
+                            start = 1.max(loc.saturating_sub(bst_loc));
                         } else {
                             // Already passed loc, downhill from here on in.
                             break;
@@ -4420,10 +4414,7 @@ mod tests {
 
         dmp.cleanup_efficiency(&mut diffs);
         assert_eq!(
-            vec![
-                Diff::delete("😀xyz❤️‍🔥".as_bytes()),
-                Diff::insert(b"12xyz34"),
-            ],
+            vec![Diff::delete("😀xyz❤️‍🔥".as_bytes()), Diff::insert(b"12xyz34"),],
             diffs
         );
 

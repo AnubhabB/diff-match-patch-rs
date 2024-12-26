@@ -26,7 +26,7 @@ pub struct HtmlConfig<'a> {
     equality_style: Option<&'a str>,
 }
 
-impl<'a> Default for HtmlConfig<'a> {
+impl Default for HtmlConfig<'_> {
     fn default() -> Self {
         Self {
             insert_tag: "ins",
