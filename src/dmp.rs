@@ -821,6 +821,7 @@ impl DiffMatchPatch {
         Ok(vec![Diff::delete(old), Diff::insert(new)])
     }
 
+    #[inline(never)]
     fn front_path_i<'a, T: DType>(
         old: &'a [T],
         new: &'a [T],
@@ -841,8 +842,14 @@ impl DiffMatchPatch {
         //     x1 += t;
         //     y1 += t;
         // }
+        // if x1 >= old.len() || y1 >= new.len() {
+        //     return (x1, y1);
+        // }
 
-        // Handle remaining
+        // old[x1 ..].iter().zip(new[y1 ..].iter()).take_while(|(a, b)| a == b).for_each(|_| {
+        //     x1 += 1;
+        //     y1 += 1;
+        // });
         while x1 < old.len() && y1 < new.len() {
             if old[x1] != new[y1] {
                 break;
@@ -856,7 +863,7 @@ impl DiffMatchPatch {
 
     // Does a substring of shorttext exist within longtext such that the substring
     // is at least half the length of longtext?
-    //idx Start index of quarter length substring within longtext.
+    // idx Start index of quarter length substring within longtext.
     #[inline]
     fn half_match_i<'a, T: DType>(
         long: &'a [T],
@@ -1002,6 +1009,7 @@ impl DiffMatchPatch {
         //     }
         // }
         // let mut pattern = &l[minlen - len..];
+        // Document: write about this optimization
         while let Some(found) = r
             .windows(len)
             .step_by(1)
