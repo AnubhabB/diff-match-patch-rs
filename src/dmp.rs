@@ -21,6 +21,8 @@ pub enum Ops {
     Insert,
 }
 
+// const CHUNK_SIZE: usize = 32;
+
 /// A structure representing a diff
 /// (Ops::Delete, String::new("Hello")) means delete `Hello`
 /// (Ops::Insert, String::new("Goodbye")) means add `Goodbye`
@@ -648,17 +650,18 @@ impl DiffMatchPatch {
         new: &'a [T],
         deadline: Option<Time>,
     ) -> Result<Vec<Diff<T>>, crate::errors::Error> {
-        // let text1_length = old.len() as isize;
-        // let text2_length = new.len() as isize;
         let old_len = old.len() as isize;
         let new_len = new.len() as isize;
 
-        let max_d = (old_len + new_len + 1) / 2;
-        let v_offset = max_d;
-        let v_len = 2 * max_d;
+        let v_offset = (old_len + new_len + 1) >> 1;
+        let v_len = v_offset << 1;
 
-        let mut v1 = vec![-1_isize; v_len as usize];
-        let mut v2 = vec![-1_isize; v_len as usize];
+        // Document: write about this optimization
+        let mut v = vec![-1_isize; (v_len << 1) as usize];
+        let (v1, v2) = v.split_at_mut(v_len as usize);
+        // let mut v1 = &mut v[..v_len as usize];
+        // let mut v2 = &mut v[v_len as usize ..];
+        // let mut v2 = v1.clone();
 
         v1[v_offset as usize + 1] = 0;
         v2[v_offset as usize + 1] = 0;
@@ -666,7 +669,7 @@ impl DiffMatchPatch {
         let delta = old_len - new_len;
         // If the total number of characters is odd, then the front path will collide
         // with the reverse path.
-        let front = delta % 2 != 0;
+        let front = (delta & 1) != 0;
 
         // Offsets for start and end of k loop.
         // Prevents mapping of space beyond the grid.
@@ -675,7 +678,7 @@ impl DiffMatchPatch {
         let mut k2start: isize = 0;
         let mut k2end: isize = 0;
 
-        for d in 0..max_d {
+        for d in 0..v_offset {
             // Bail out if deadline is reached.
             if let Some(tout) = deadline {
                 #[cfg(target_arch = "wasm32")]
@@ -689,7 +692,7 @@ impl DiffMatchPatch {
             }
 
             // Walk the front path one step.
-            let mut k1 = -d + k1start;
+            let mut k1 = k1start - d;
             while k1 < d + 1 - k1end {
                 let (x1, y1) = {
                     let k1_offset = v_offset + k1;
@@ -702,15 +705,20 @@ impl DiffMatchPatch {
                     };
 
                     let mut y1 = x1 - k1;
-                    while x1 < old_len && y1 < new_len {
-                        let i1 = if x1 < 0 { old_len + x1 } else { x1 };
-                        let i2 = if y1 < 0 { new_len + y1 } else { y1 };
-                        if old[i1 as usize] != new[i2 as usize] {
-                            break;
-                        }
-                        x1 += 1;
-                        y1 += 1;
-                    }
+                    // while x1 < old_len && y1 < new_len {
+                    //     if old[x1 as usize] != new[y1 as usize] {
+                    //         break;
+                    //     }
+                    //     x1 += 1;
+                    //     y1 += 1;
+                    // }
+                    // Document: write about this optimization - failure
+
+                    let (xi, yi) = Self::front_path_i(old, new, x1 as usize, y1 as usize);
+
+                    y1 = yi as isize;
+                    x1 = xi as isize;
+
                     v1[k1_offset as usize] = x1;
 
                     (x1, y1)
@@ -811,6 +819,39 @@ impl DiffMatchPatch {
         }
 
         Ok(vec![Diff::delete(old), Diff::insert(new)])
+    }
+
+    fn front_path_i<'a, T: DType>(
+        old: &'a [T],
+        new: &'a [T],
+        x1: usize,
+        y1: usize,
+    ) -> (usize, usize) {
+        let mut x1 = x1;
+        let mut y1 = y1;
+        // Try and vectorize this
+        // if x1 < old.len() && y1 < new.len() {
+        //     let t = old[x1 ..].chunks_exact(CHUNK_SIZE).zip(new[y1 ..].chunks_exact(CHUNK_SIZE))
+        //         .take_while(|(a, b)| a == b)
+        //         .count() * CHUNK_SIZE;
+
+        //     // if t > 0 {
+        //     //     println!("{t}");
+        //     // }
+        //     x1 += t;
+        //     y1 += t;
+        // }
+
+        // Handle remaining
+        while x1 < old.len() && y1 < new.len() {
+            if old[x1] != new[y1] {
+                break;
+            }
+            x1 += 1;
+            y1 += 1;
+        }
+
+        (x1, y1)
     }
 
     // Does a substring of shorttext exist within longtext such that the substring
@@ -920,23 +961,18 @@ impl DiffMatchPatch {
             return 0;
         }
 
-        let minlen = lhs.len().min(rhs.len());
+        // let minlen = lhs.len().min(rhs.len());
 
         // A working set with longer string truncated
-        let l = if lhs.len() > rhs.len() {
-            &lhs[lhs.len() - rhs.len()..]
+        let (l, r) = if lhs.len() > rhs.len() {
+            (&lhs[lhs.len() - rhs.len()..], rhs)
         } else {
-            lhs
-        };
-        let r = if lhs.len() < rhs.len() {
-            &rhs[..lhs.len()]
-        } else {
-            rhs
+            (lhs, &rhs[..lhs.len()])
         };
 
         // Quick check for the worst case.
         if l == r {
-            return minlen;
+            return l.len();
         }
 
         // Start by looking for a single character match
@@ -945,24 +981,40 @@ impl DiffMatchPatch {
         let mut len = 1;
         let mut best = 0;
 
-        loop {
-            let pattern = &l[minlen - len..];
-            let found = if let Some(found) = r
-                .windows(pattern.len())
-                .step_by(1)
-                .position(|p| p == pattern)
-            {
-                found
-            } else {
-                return best;
-            };
+        // let minlen = l.len();
 
+        // loop {
+        //     let pattern = &l[minlen - len..];
+        //     let found = if let Some(found) = r
+        //         .windows(pattern.len())
+        //         .step_by(1)
+        //         .position(|p| p == pattern)
+        //     {
+        //         found
+        //     } else {
+        //         return best;
+        //     };
+
+        //     len += found;
+        //     if found == 0 || l[minlen - len..] == r[..len] {
+        //         best = len;
+        //         len += 1;
+        //     }
+        // }
+        // let mut pattern = &l[minlen - len..];
+        while let Some(found) = r
+            .windows(len)
+            .step_by(1)
+            .position(|p| p == &l[l.len() - len..])
+        {
             len += found;
-            if found == 0 || l[minlen - len..] == r[..len] {
+            if found == 0 || l[l.len() - len..] == r[..len] {
                 best = len;
                 len += 1;
             }
         }
+
+        best
     }
 
     // Reduce the number of edits by eliminating semantically trivial equalities
