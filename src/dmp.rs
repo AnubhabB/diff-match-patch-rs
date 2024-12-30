@@ -663,8 +663,11 @@ impl DiffMatchPatch {
         // let mut v2 = &mut v[v_len as usize ..];
         // let mut v2 = v1.clone();
 
-        v1[v_offset as usize + 1] = 0;
-        v2[v_offset as usize + 1] = 0;
+        {
+            let v_trg = v_offset as usize + 1;
+            v1[v_trg] = 0;
+            v2[v_trg] = 0;
+        }
 
         let delta = old_len - new_len;
         // If the total number of characters is odd, then the front path will collide
@@ -673,12 +676,12 @@ impl DiffMatchPatch {
 
         // Offsets for start and end of k loop.
         // Prevents mapping of space beyond the grid.
-        let mut k1start: isize = 0;
-        let mut k1end: isize = 0;
-        let mut k2start: isize = 0;
-        let mut k2end: isize = 0;
+        let mut k1start = 0;
+        let mut k1end = 0;
+        let mut k2start = 0;
+        let mut k2end = 0;
 
-        for d in 0..v_offset {
+        for edit_dist in 0..v_offset {
             // Bail out if deadline is reached.
             if let Some(tout) = deadline {
                 #[cfg(target_arch = "wasm32")]
@@ -692,16 +695,26 @@ impl DiffMatchPatch {
             }
 
             // Walk the front path one step.
-            let mut k1 = k1start - d;
-            while k1 < d + 1 - k1end {
+            let mut k1 = k1start - edit_dist;
+            while k1 < edit_dist + 1 - k1end {
                 let (x1, y1) = {
                     let k1_offset = v_offset + k1;
-                    let mut x1 = if k1 == -d
-                        || (k1 != d && v1[k1_offset as usize - 1] < v1[k1_offset as usize + 1])
-                    {
+                    // Document: write about this optimization - success
+                    let v1_prev = if k1_offset > 0 {
+                        v1[k1_offset as usize - 1]
+                    } else {
+                        -1
+                    };
+                    let v1_next = if k1_offset + 1 < v1.len() as isize {
                         v1[k1_offset as usize + 1]
                     } else {
-                        v1[k1_offset as usize - 1] + 1
+                        -1
+                    };
+
+                    let mut x1 = if k1 == -edit_dist || (k1 != edit_dist && v1_prev < v1_next) {
+                        v1_next
+                    } else {
+                        v1_prev + 1
                     };
 
                     let mut y1 = x1 - k1;
@@ -752,17 +765,26 @@ impl DiffMatchPatch {
             }
 
             // Walk the reverse path one step.
-            let mut k2 = -d + k2start;
-            while k2 < d + 1 - k2end {
+            let mut k2 = k2start - edit_dist;
+            while k2 < edit_dist + 1 - k2end {
                 let (mut x2, y2) = {
                     let k2_offset = v_offset + k2;
-
-                    let mut x2 = if k2 == -d
-                        || (k2 != d && v2[k2_offset as usize - 1] < v2[k2_offset as usize + 1])
-                    {
+                    // Document: write about this optimization - success
+                    let v2_prev = if k2_offset > 0 {
+                        v2[k2_offset as usize - 1]
+                    } else {
+                        -1
+                    };
+                    let v2_next = if k2_offset + 1 < v2.len() as isize {
                         v2[k2_offset as usize + 1]
                     } else {
-                        v2[k2_offset as usize - 1] + 1
+                        -1
+                    };
+
+                    let mut x2 = if k2 == -edit_dist || (k2 != edit_dist && v2_prev < v2_next) {
+                        v2_next
+                    } else {
+                        v2_prev + 1
                     };
 
                     let mut y2 = x2 - k2;
@@ -898,6 +920,7 @@ impl DiffMatchPatch {
 
         (x2, y2)
     }
+
     // Does a substring of shorttext exist within longtext such that the substring
     // is at least half the length of longtext?
     // idx Start index of quarter length substring within longtext.
