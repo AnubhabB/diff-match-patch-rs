@@ -712,9 +712,9 @@ impl DiffMatchPatch {
                     //     x1 += 1;
                     //     y1 += 1;
                     // }
-                    // Document: write about this optimization - failure
 
-                    let (xi, yi) = Self::front_path_i(old, new, x1 as usize, y1 as usize);
+                    // Document: write about this optimization - success
+                    let (xi, yi) = Self::bisect_fwd_path_i(old, new, x1 as usize, y1 as usize);
 
                     y1 = yi as isize;
                     x1 = xi as isize;
@@ -766,23 +766,29 @@ impl DiffMatchPatch {
                     };
 
                     let mut y2 = x2 - k2;
-                    while x2 < old_len && y2 < new_len {
-                        let i1 = if old_len - x2 > 0 {
-                            old_len - x2 - 1
-                        } else {
-                            x2 + 1
-                        };
-                        let i2 = if new_len - y2 > 0 {
-                            new_len - y2 - 1
-                        } else {
-                            y2 + 1
-                        };
-                        if old[i1 as usize] != new[i2 as usize] {
-                            break;
-                        }
-                        x2 += 1;
-                        y2 += 1;
-                    }
+                    // while x2 < old_len && y2 < new_len {
+                    //     let i1 = if old_len - x2 > 0 {
+                    //         old_len - x2 - 1
+                    //     } else {
+                    //         x2 + 1
+                    //     };
+                    //     let i2 = if new_len - y2 > 0 {
+                    //         new_len - y2 - 1
+                    //     } else {
+                    //         y2 + 1
+                    //     };
+                    //     if old[i1 as usize] != new[i2 as usize] {
+                    //         break;
+                    //     }
+                    //     x2 += 1;
+                    //     y2 += 1;
+                    // }
+
+                    // Document: write about this optimization - success
+                    let (xi, yi) = Self::bisect_rev_path_i(old, new, x2 as usize, y2 as usize);
+                    y2 = yi as isize;
+                    x2 = xi as isize;
+
                     v2[k2_offset as usize] = x2;
 
                     (x2, y2)
@@ -821,8 +827,8 @@ impl DiffMatchPatch {
         Ok(vec![Diff::delete(old), Diff::insert(new)])
     }
 
-    #[inline(never)]
-    fn front_path_i<'a, T: DType>(
+    // #[inline(never)]
+    fn bisect_fwd_path_i<'a, T: DType>(
         old: &'a [T],
         new: &'a [T],
         x1: usize,
@@ -830,7 +836,7 @@ impl DiffMatchPatch {
     ) -> (usize, usize) {
         let mut x1 = x1;
         let mut y1 = y1;
-        // Try and vectorize this
+        // Try and vectorize this // Document: write about this optimization - failure
         // if x1 < old.len() && y1 < new.len() {
         //     let t = old[x1 ..].chunks_exact(CHUNK_SIZE).zip(new[y1 ..].chunks_exact(CHUNK_SIZE))
         //         .take_while(|(a, b)| a == b)
@@ -849,18 +855,49 @@ impl DiffMatchPatch {
         // old[x1 ..].iter().zip(new[y1 ..].iter()).take_while(|(a, b)| a == b).for_each(|_| {
         //     x1 += 1;
         //     y1 += 1;
-        // });
+
         while x1 < old.len() && y1 < new.len() {
             if old[x1] != new[y1] {
                 break;
             }
+
             x1 += 1;
             y1 += 1;
         }
 
         (x1, y1)
+        // Self::bisect_front_path_rem_i(old, new, x1, y1)
     }
 
+    fn bisect_rev_path_i<'a, T: DType>(
+        old: &'a [T],
+        new: &'a [T],
+        x2: usize,
+        y2: usize,
+    ) -> (usize, usize) {
+        let mut x2 = x2;
+        let mut y2 = y2;
+
+        while x2 < old.len() && y2 < new.len() {
+            let i1 = if old.len() - x2 > 0 {
+                old.len() - x2 - 1
+            } else {
+                x2 + 1
+            };
+            let i2 = if new.len() - y2 > 0 {
+                new.len() - y2 - 1
+            } else {
+                y2 + 1
+            };
+            if old[i1] != new[i2] {
+                break;
+            }
+            x2 += 1;
+            y2 += 1;
+        }
+
+        (x2, y2)
+    }
     // Does a substring of shorttext exist within longtext such that the substring
     // is at least half the length of longtext?
     // idx Start index of quarter length substring within longtext.
@@ -872,7 +909,7 @@ impl DiffMatchPatch {
     ) -> Option<HalfMatch<'a, T>> {
         // Start with a 1/4 length substring at position i as a seed.
 
-        let seed = &long[idx..idx + long.len() / 4];
+        let seed = &long[idx..idx + (long.len() >> 2)];
         let seedleen = seed.len();
         let mut j = 0;
 
