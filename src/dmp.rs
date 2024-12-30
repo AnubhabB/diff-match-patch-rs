@@ -653,8 +653,8 @@ impl DiffMatchPatch {
         let old_len = old.len() as isize;
         let new_len = new.len() as isize;
 
-        let v_offset = (old_len + new_len + 1) >> 1;
-        let v_len = v_offset << 1;
+        let v_offset = (old_len + new_len + 1) >> 1; // same as `max_d`, (/ 2)
+        let v_len = v_offset << 1; // (* 2)
 
         // Document: write about this optimization
         let mut v = vec![-1_isize; (v_len << 1) as usize];
@@ -700,12 +700,12 @@ impl DiffMatchPatch {
                 let (x1, y1) = {
                     let k1_offset = v_offset + k1;
                     // Document: write about this optimization - success
-                    let v1_prev = if k1_offset > 0 {
+                    let v1_prev = if (1..v1.len() as isize).contains(&k1_offset) {
                         v1[k1_offset as usize - 1]
                     } else {
                         -1
                     };
-                    let v1_next = if k1_offset + 1 < v1.len() as isize {
+                    let v1_next = if (0..v1.len() as isize).contains(&(k1_offset + 1)) {
                         v1[k1_offset as usize + 1]
                     } else {
                         -1
@@ -770,12 +770,12 @@ impl DiffMatchPatch {
                 let (mut x2, y2) = {
                     let k2_offset = v_offset + k2;
                     // Document: write about this optimization - success
-                    let v2_prev = if k2_offset > 0 {
+                    let v2_prev = if (0..v2.len() as isize).contains(&(k2_offset - 1)) {
                         v2[k2_offset as usize - 1]
                     } else {
                         -1
                     };
-                    let v2_next = if k2_offset + 1 < v2.len() as isize {
+                    let v2_next = if (0..v2.len() as isize).contains(&(k2_offset + 1)) {
                         v2[k2_offset as usize + 1]
                     } else {
                         -1
@@ -811,7 +811,9 @@ impl DiffMatchPatch {
                     y2 = yi as isize;
                     x2 = xi as isize;
 
-                    v2[k2_offset as usize] = x2;
+                    if (0..v2.len() as isize).contains(&k2_offset) {
+                        v2[k2_offset as usize] = x2;
+                    }
 
                     (x2, y2)
                 };
@@ -891,6 +893,7 @@ impl DiffMatchPatch {
         // Self::bisect_front_path_rem_i(old, new, x1, y1)
     }
 
+    // #[inline(never)]
     fn bisect_rev_path_i<'a, T: DType>(
         old: &'a [T],
         new: &'a [T],
