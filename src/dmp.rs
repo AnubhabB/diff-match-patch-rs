@@ -21,8 +21,6 @@ pub enum Ops {
     Insert,
 }
 
-// const CHUNK_SIZE: usize = 32;
-
 /// A structure representing a diff
 /// (Ops::Delete, String::new("Hello")) means delete `Hello`
 /// (Ops::Insert, String::new("Goodbye")) means add `Goodbye`
@@ -385,16 +383,16 @@ impl DiffMatchPatch {
         };
 
         // pointless - two small for this algo
-        if long.len() < 4 || short.len() * 2 < long.len() {
+        if long.len() < 4 || (short.len() << 1) < long.len() {
             return None;
         }
 
         // First check if the second quarter is the seed for a half-match.
         // let hm1 = Self::diff_half_match_i(long, short, (long.len() as f32 / 4.).ceil() as usize);
-        let hm1 = Self::half_match_i(long, short, long.len() / 4);
+        let hm1 = Self::half_match_i(long, short, long.len() >> 2);
         // Check again based on the third quarter.
         // let hm2 = Self::diff_half_match_i(long, short, (long.len() as f32 / 2.).ceil() as usize);
-        let hm2 = Self::half_match_i(long, short, long.len() / 2);
+        let hm2 = Self::half_match_i(long, short, long.len() >> 1);
 
         if hm1.is_none() && hm2.is_none() {
             return None;
@@ -656,12 +654,8 @@ impl DiffMatchPatch {
         let v_offset = (old_len + new_len + 1) >> 1; // same as `max_d`, (/ 2)
         let v_len = v_offset << 1; // (* 2)
 
-        // Document: write about this optimization
         let mut v = vec![-1_isize; (v_len << 1) as usize];
         let (v1, v2) = v.split_at_mut(v_len as usize);
-        // let mut v1 = &mut v[..v_len as usize];
-        // let mut v2 = &mut v[v_len as usize ..];
-        // let mut v2 = v1.clone();
 
         {
             let v_trg = v_offset as usize + 1;
@@ -699,7 +693,7 @@ impl DiffMatchPatch {
             while k1 < edit_dist + 1 - k1end {
                 let (x1, y1) = {
                     let k1_offset = v_offset + k1;
-                    // Document: write about this optimization - success
+
                     let v1_prev = if (1..v1.len() as isize).contains(&k1_offset) {
                         v1[k1_offset as usize - 1]
                     } else {
@@ -718,21 +712,14 @@ impl DiffMatchPatch {
                     };
 
                     let mut y1 = x1 - k1;
-                    // while x1 < old_len && y1 < new_len {
-                    //     if old[x1 as usize] != new[y1 as usize] {
-                    //         break;
-                    //     }
-                    //     x1 += 1;
-                    //     y1 += 1;
-                    // }
-
-                    // Document: write about this optimization - success
                     let (xi, yi) = Self::bisect_fwd_path_i(old, new, x1 as usize, y1 as usize);
 
                     y1 = yi as isize;
                     x1 = xi as isize;
 
-                    v1[k1_offset as usize] = x1;
+                    if (0..v1.len() as isize).contains(&k1_offset) {
+                        v1[k1_offset as usize] = x1;
+                    }
 
                     (x1, y1)
                 };
@@ -745,7 +732,7 @@ impl DiffMatchPatch {
                     k1start += 2;
                 } else if front {
                     let k2_offset = v_offset + delta - k1;
-                    if k2_offset >= 0 && k2_offset < v_len && v2[k2_offset as usize] != -1 {
+                    if (0..v_len).contains(&k2_offset) && v2[k2_offset as usize] != -1 {
                         // Mirror x2 onto top-left coordinate system.
                         let x2 = old_len - v2[k2_offset as usize];
                         if x1 >= x2 {
@@ -769,7 +756,7 @@ impl DiffMatchPatch {
             while k2 < edit_dist + 1 - k2end {
                 let (mut x2, y2) = {
                     let k2_offset = v_offset + k2;
-                    // Document: write about this optimization - success
+
                     let v2_prev = if (0..v2.len() as isize).contains(&(k2_offset - 1)) {
                         v2[k2_offset as usize - 1]
                     } else {
@@ -788,25 +775,6 @@ impl DiffMatchPatch {
                     };
 
                     let mut y2 = x2 - k2;
-                    // while x2 < old_len && y2 < new_len {
-                    //     let i1 = if old_len - x2 > 0 {
-                    //         old_len - x2 - 1
-                    //     } else {
-                    //         x2 + 1
-                    //     };
-                    //     let i2 = if new_len - y2 > 0 {
-                    //         new_len - y2 - 1
-                    //     } else {
-                    //         y2 + 1
-                    //     };
-                    //     if old[i1 as usize] != new[i2 as usize] {
-                    //         break;
-                    //     }
-                    //     x2 += 1;
-                    //     y2 += 1;
-                    // }
-
-                    // Document: write about this optimization - success
                     let (xi, yi) = Self::bisect_rev_path_i(old, new, x2 as usize, y2 as usize);
                     y2 = yi as isize;
                     x2 = xi as isize;
@@ -826,7 +794,7 @@ impl DiffMatchPatch {
                     k2start += 2;
                 } else if !front {
                     let k1_offset = v_offset + delta - k2;
-                    if k1_offset >= 0 && k1_offset < v_len && v1[k1_offset as usize] != -1 {
+                    if (0..v_len).contains(&k1_offset) && v1[k1_offset as usize] != -1 {
                         let x1 = v1[k1_offset as usize];
                         let y1 = v_offset + x1 - k1_offset;
                         // Mirror x2 onto top-left coordinate system.
@@ -851,7 +819,6 @@ impl DiffMatchPatch {
         Ok(vec![Diff::delete(old), Diff::insert(new)])
     }
 
-    // #[inline(never)]
     fn bisect_fwd_path_i<'a, T: DType>(
         old: &'a [T],
         new: &'a [T],
@@ -860,25 +827,6 @@ impl DiffMatchPatch {
     ) -> (usize, usize) {
         let mut x1 = x1;
         let mut y1 = y1;
-        // Try and vectorize this // Document: write about this optimization - failure
-        // if x1 < old.len() && y1 < new.len() {
-        //     let t = old[x1 ..].chunks_exact(CHUNK_SIZE).zip(new[y1 ..].chunks_exact(CHUNK_SIZE))
-        //         .take_while(|(a, b)| a == b)
-        //         .count() * CHUNK_SIZE;
-
-        //     // if t > 0 {
-        //     //     println!("{t}");
-        //     // }
-        //     x1 += t;
-        //     y1 += t;
-        // }
-        // if x1 >= old.len() || y1 >= new.len() {
-        //     return (x1, y1);
-        // }
-
-        // old[x1 ..].iter().zip(new[y1 ..].iter()).take_while(|(a, b)| a == b).for_each(|_| {
-        //     x1 += 1;
-        //     y1 += 1;
 
         while x1 < old.len() && y1 < new.len() {
             if old[x1] != new[y1] {
@@ -890,10 +838,8 @@ impl DiffMatchPatch {
         }
 
         (x1, y1)
-        // Self::bisect_front_path_rem_i(old, new, x1, y1)
     }
 
-    // #[inline(never)]
     fn bisect_rev_path_i<'a, T: DType>(
         old: &'a [T],
         new: &'a [T],
@@ -968,7 +914,7 @@ impl DiffMatchPatch {
             j += 1;
         }
 
-        if best_common.len() * 2 >= long.len() {
+        if (best_common.len() << 1) >= long.len() {
             Some(HalfMatch {
                 prefix_long: best_long_a,
                 suffix_long: best_long_b,
@@ -1019,19 +965,16 @@ impl DiffMatchPatch {
                 pointmax = pointmid;
             }
 
-            pointmid = (pointmax - pointmin) / 2 + pointmin;
+            pointmid = ((pointmax - pointmin) >> 1) + pointmin; // /2
         }
 
         pointmid
     }
 
-    #[inline]
     fn common_overlap<T: DType>(lhs: &[T], rhs: &[T]) -> usize {
         if lhs.is_empty() || rhs.is_empty() {
             return 0;
         }
-
-        // let minlen = lhs.len().min(rhs.len());
 
         // A working set with longer string truncated
         let (l, r) = if lhs.len() > rhs.len() {
@@ -1051,28 +994,6 @@ impl DiffMatchPatch {
         let mut len = 1;
         let mut best = 0;
 
-        // let minlen = l.len();
-
-        // loop {
-        //     let pattern = &l[minlen - len..];
-        //     let found = if let Some(found) = r
-        //         .windows(pattern.len())
-        //         .step_by(1)
-        //         .position(|p| p == pattern)
-        //     {
-        //         found
-        //     } else {
-        //         return best;
-        //     };
-
-        //     len += found;
-        //     if found == 0 || l[minlen - len..] == r[..len] {
-        //         best = len;
-        //         len += 1;
-        //     }
-        // }
-        // let mut pattern = &l[minlen - len..];
-        // Document: write about this optimization
         while let Some(found) = r
             .windows(len)
             .step_by(1)
@@ -1194,8 +1115,8 @@ impl DiffMatchPatch {
                 let delete = diffs[pointer - 1].data().to_vec();
                 let insert = diffs[pointer].data().to_vec();
 
-                let delete_thres = delete.len() / 2 + delete.len() % 2;
-                let insert_thres = insert.len() / 2 + insert.len() % 2;
+                let delete_thres = (delete.len() >> 1) + delete.len() % 2;
+                let insert_thres = (insert.len() >> 1) + insert.len() % 2;
 
                 let overlap_1 = Self::common_overlap(&delete[..], &insert[..]);
                 let overlap_2 = Self::common_overlap(&insert[..], &delete[..]);
@@ -1607,7 +1528,7 @@ impl DiffMatchPatch {
 
                 if let Some(le) = &mut last_eq {
                     if (pre_ins && pre_del && post_ins && post_del)
-                        || (le.len() < edit_cost / 2
+                        || (le.len() < (edit_cost >> 1)
                             && pre_ins as u8 + pre_del as u8 + post_ins as u8 + post_del as u8 == 3)
                     {
                         // Duplicate record.
@@ -2416,7 +2337,7 @@ impl DiffMatchPatch {
                     .rev()
                     .position(|p| p == pattern)
                     .map(|p| text.len() - p - pattern.len())
-                && pattern.len() < self.match_max_bits() - patch_margin * 2)
+                && pattern.len() < self.match_max_bits() - (patch_margin << 1))
         {
             padding += patch_margin;
 
