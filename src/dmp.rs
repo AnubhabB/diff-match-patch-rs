@@ -458,7 +458,7 @@ impl DiffMatchPatch {
 
         // Add a dummy entry at the end.
         diffs.push(Diff::equal(&[]));
-        let mut difflen = diffs.len();
+        
         let mut pointer = 0_usize;
 
         // count of bytes inserted
@@ -470,7 +470,7 @@ impl DiffMatchPatch {
         // same for delete
         let mut delete_data = Vec::new();
 
-        while pointer < difflen {
+        while pointer < diffs.len() {
             match diffs[pointer].op() {
                 Ops::Insert => {
                     insert_n += 1;
@@ -499,7 +499,6 @@ impl DiffMatchPatch {
                         });
 
                         pointer += subdifflen;
-                        difflen = diffs.len();
                     }
                     // resetting counters
                     insert_n = 0;
@@ -1292,12 +1291,21 @@ impl DiffMatchPatch {
 
     // Reorder and merge like edit sections.  Merge equalities.
     // Any edit section can move as long as it doesn't cross an equality.
-    #[inline]
     fn cleanup_merge<T: DType>(diffs: &mut Vec<Diff<T>>) {
+        Self::cleanup_merge_first(diffs);
+
+        let changes = Self::cleanup_merge_second(diffs);
+
+        if changes {
+            Self::cleanup_merge(diffs);
+        }
+    }
+
+    fn cleanup_merge_first<T: DType>(diffs: &mut Vec<Diff<T>>) {
         // Push a dummy diff ... this triggers the equality as a last step
         diffs.push(Diff::equal(&[]));
 
-        let mut difflen = diffs.len();
+        // let mut difflen = diffs.len();
 
         let mut pointer = 0_usize;
 
@@ -1307,7 +1315,7 @@ impl DiffMatchPatch {
         let mut insert_data = vec![];
         let mut delete_data = vec![];
 
-        while pointer < difflen {
+        while pointer < diffs.len() {
             match diffs[pointer].op() {
                 Ops::Insert => {
                     insert_n += 1;
@@ -1320,74 +1328,14 @@ impl DiffMatchPatch {
                     pointer += 1;
                 }
                 Ops::Equal => {
-                    // Upon reaching an equality, check for prior redundancies.
-                    if delete_n + insert_n > 1 {
-                        if delete_n != 0 && insert_n != 0 {
-                            // Factor out any common prefixies.
-                            let commonlen =
-                                Self::common_prefix(&insert_data[..], &delete_data[..], false);
-                            if commonlen != 0 {
-                                let tmpidx = pointer - delete_n - insert_n;
-                                if tmpidx > 0 && diffs[tmpidx - 1].op() == Ops::Equal {
-                                    diffs[tmpidx - 1].1 =
-                                        [&diffs[tmpidx - 1].1[..], &insert_data[..commonlen]]
-                                            .concat();
-                                } else {
-                                    diffs.insert(0, Diff::equal(&insert_data[..commonlen]));
-                                    pointer += 1;
-                                }
-                                insert_data = insert_data[commonlen..].to_vec();
-                                delete_data = delete_data[commonlen..].to_vec();
-                            }
-
-                            // Factor out any common suffixies.
-                            let commonlen =
-                                Self::common_prefix(&insert_data[..], &delete_data[..], true);
-                            if commonlen > 0 {
-                                diffs[pointer].1 = [
-                                    &insert_data[insert_data.len() - commonlen..],
-                                    diffs[pointer].data(),
-                                ]
-                                .concat();
-                                insert_data = insert_data[..insert_data.len() - commonlen].to_vec();
-                                delete_data = delete_data[..delete_data.len() - commonlen].to_vec();
-                            }
-                        }
-
-                        // Delete the offending records and add the merged ones.
-                        pointer -= delete_n + insert_n;
-
-                        // Reversing because index will not change
-                        (pointer..pointer + delete_n + insert_n)
-                            .rev()
-                            .for_each(|i| {
-                                diffs.remove(i);
-                            });
-                        difflen = diffs.len();
-
-                        if !delete_data.is_empty() {
-                            diffs.insert(pointer, Diff::delete(&delete_data));
-                            pointer += 1;
-                            difflen = diffs.len();
-                        }
-
-                        if !insert_data.is_empty() {
-                            diffs.insert(pointer, Diff::insert(&insert_data));
-                            pointer += 1;
-                            difflen = diffs.len();
-                        }
-
-                        pointer += 1;
-                    } else if pointer != 0 && diffs[pointer - 1].op() == Ops::Equal {
-                        // Merge this equality with the previous one.;
-                        diffs[pointer - 1].1 =
-                            [&diffs[pointer - 1].1[..], diffs[pointer].data()].concat();
-                        diffs.remove(pointer);
-
-                        difflen = diffs.len();
-                    } else {
-                        pointer += 1;
-                    }
+                    Self::cleanup_perge_proc_equal(
+                        diffs,
+                        insert_n,
+                        delete_n,
+                        insert_data,
+                        delete_data,
+                        &mut pointer,
+                    );
 
                     insert_n = 0;
                     delete_n = 0;
@@ -1397,75 +1345,144 @@ impl DiffMatchPatch {
             }
         }
 
+        // println!("{pointer} {}", diffs.len());
+
         if let Some(dl) = diffs.last() {
             if dl.data().is_empty() {
                 diffs.pop();
             }
         }
+    }
 
-        difflen = diffs.len();
-
-        // Second pass: look for single edits surrounded on both sides by equalities
-        // which can be shifted sideways to eliminate an equality.
-        // e.g: A<ins>BA</ins>C -> <ins>AB</ins>AC
-        pointer = 1;
+    // Second pass: look for single edits surrounded on both sides by equalities
+    // which can be shifted sideways to eliminate an equality.
+    // e.g: A<ins>BA</ins>C -> <ins>AB</ins>AC
+    fn cleanup_merge_second<T: DType>(diffs: &mut Vec<Diff<T>>) -> bool {
         let mut changes = false;
+        let mut pointer = 1;
 
-        while difflen > 0 && pointer < difflen - 1 {
-            if let (Some(diff_prev), Some(diff), Some(diff_next)) = (
-                diffs.get(pointer - 1),
-                diffs.get(pointer),
-                diffs.get(pointer + 1),
-            ) {
-                // This is a single edit surrounded by equalities.
-                if diff_prev.op() == Ops::Equal && diff_next.op() == Ops::Equal {
-                    let substr_idx = if diff.size() >= diff_prev.size() {
-                        diff.size() - diff_prev.size()
-                    } else {
-                        0
-                    };
-                    if &diff.data()[substr_idx..] == diff_prev.data() {
-                        // Shift the edit over the previous equality.
-                        let new_current_data = [
-                            diff_prev.data(),
-                            &diff.data()[..diff.size() - diff_prev.size()],
-                        ]
-                        .concat();
-                        let new_next_data = [diff_prev.data(), diff_next.data()].concat();
+        while !diffs.is_empty() && (1..diffs.len() - 1).contains(&pointer) {
+            let (diff_prev, diff, diff_next) =
+                (&diffs[pointer - 1], &diffs[pointer], &diffs[pointer + 1]);
 
-                        diffs[pointer].1 = new_current_data;
-                        diffs[pointer + 1].1 = new_next_data;
-                        diffs.remove(pointer - 1);
-                        difflen = diffs.len();
+            // This is a single edit surrounded by equalities.
+            if diff_prev.op() == Ops::Equal && diff_next.op() == Ops::Equal {
+                let substr_idx = if diff.size() >= diff_prev.size() {
+                    diff.size() - diff_prev.size()
+                } else {
+                    0
+                };
+                if &diff.data()[substr_idx..] == diff_prev.data() {
+                    // Shift the edit over the previous equality.
+                    let new_current_data = [
+                        diff_prev.data(),
+                        &diff.data()[..diff.size() - diff_prev.size()],
+                    ]
+                    .concat();
+                    let new_next_data = [diff_prev.data(), diff_next.data()].concat();
 
-                        changes = true;
-                    } else if &diff.data()[..if diff_next.size() <= diff.size() {
-                        diff_next.size()
-                    } else {
-                        diff.size()
-                    }] == diff_next.data()
-                    {
-                        // Shift the edit over the next equality.
-                        diffs[pointer - 1].1 =
-                            [&diffs[pointer - 1].1[..], diffs[pointer + 1].data()].concat();
-                        diffs[pointer].1 = [
-                            &diffs[pointer].data()[diffs[pointer + 1].size()..],
-                            diffs[pointer + 1].data(),
-                        ]
-                        .concat();
-                        diffs.remove(pointer + 1);
-                        difflen = diffs.len();
+                    diffs[pointer].1 = new_current_data;
+                    diffs[pointer + 1].1 = new_next_data;
+                    diffs.remove(pointer - 1);
 
-                        changes = true;
-                    }
+                    changes = true;
+                } else if &diff.data()[..if diff_next.size() <= diff.size() {
+                    diff_next.size()
+                } else {
+                    diff.size()
+                }] == diff_next.data()
+                {
+                    // Shift the edit over the next equality.
+                    diffs[pointer - 1].1 =
+                        [&diffs[pointer - 1].1[..], diffs[pointer + 1].data()].concat();
+                    diffs[pointer].1 = [
+                        &diffs[pointer].data()[diffs[pointer + 1].size()..],
+                        diffs[pointer + 1].data(),
+                    ]
+                    .concat();
+                    diffs.remove(pointer + 1);
+
+                    changes = true;
                 }
             }
 
             pointer += 1;
         }
 
-        if changes {
-            Self::cleanup_merge(diffs);
+        changes
+    }
+
+    fn cleanup_perge_proc_equal<T: DType>(
+        diffs: &mut Vec<Diff<T>>,
+        insert_n: usize,
+        delete_n: usize,
+        insert_data: Vec<T>,
+        delete_data: Vec<T>,
+        pointer: &mut usize,
+    ) {
+        let mut insert_data = insert_data;
+        let mut delete_data = delete_data;
+
+        // Upon reaching an equality, check for prior redundancies.
+        if delete_n + insert_n > 1 {
+            if delete_n != 0 && insert_n != 0 && !insert_data.is_empty() && !delete_data.is_empty()
+            {
+                // Factor out any common prefixies.
+                let commonlen = Self::common_prefix(&insert_data[..], &delete_data[..], false);
+                if commonlen != 0 && commonlen < insert_data.len() && commonlen < delete_data.len()
+                {
+                    let tmpidx = *pointer - delete_n - insert_n - 1;
+                    if (0..diffs.len()).contains(&tmpidx) && diffs[tmpidx].op() == Ops::Equal {
+                        diffs[tmpidx].1 =
+                            [&diffs[tmpidx].1[..], &insert_data[..commonlen]].concat();
+                    } else {
+                        diffs.insert(0, Diff::equal(&insert_data[..commonlen]));
+                        *pointer += 1;
+                    }
+                    insert_data = insert_data[commonlen..].to_vec();
+                    delete_data = delete_data[commonlen..].to_vec();
+                }
+
+                // Factor out any common suffixies.
+                let commonlen = Self::common_prefix(&insert_data[..], &delete_data[..], true);
+                if commonlen > 0 {
+                    diffs[*pointer].1 = [
+                        &insert_data[insert_data.len() - commonlen..],
+                        diffs[*pointer].data(),
+                    ]
+                    .concat();
+                    insert_data = insert_data[..insert_data.len() - commonlen].to_vec();
+                    delete_data = delete_data[..delete_data.len() - commonlen].to_vec();
+                }
+            }
+
+            // Delete the offending records and add the merged ones.
+            *pointer -= delete_n + insert_n;
+
+            // Reversing because index will not change
+            (*pointer..*pointer + delete_n + insert_n)
+                .rev()
+                .for_each(|i| {
+                    diffs.remove(i);
+                });
+
+            if !delete_data.is_empty() {
+                diffs.insert(*pointer, Diff::delete(&delete_data));
+                *pointer += 1;
+            }
+
+            if !insert_data.is_empty() {
+                diffs.insert(*pointer, Diff::insert(&insert_data));
+                *pointer += 1;
+            }
+
+            *pointer += 1;
+        } else if pointer != &0 && diffs[*pointer - 1].op() == Ops::Equal {
+            // Merge this equality with the previous one.;
+            diffs[*pointer - 1].1 = [&diffs[*pointer - 1].1[..], diffs[*pointer].data()].concat();
+            diffs.remove(*pointer);
+        } else {
+            *pointer += 1;
         }
     }
 
