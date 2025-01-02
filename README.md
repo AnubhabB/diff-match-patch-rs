@@ -180,11 +180,11 @@ Benchmarks are maintained [diff-match-patch-bench repository](https://github.com
 
 | Lang.   | Library                                                                                  | Diff Avg. | Patch Avg. | Bencher    | Mode        | Correct |
 |:-------:|:----------------------------------------------------------------------------------------:|:---------:|:----------:|:----------:|:-----------:|:-------:|
-| `rust`  | [diff_match_patch v0.1.1](https://crates.io/crates/diff_match_patch)[^2]                 | 56.618 ms | 10.596 ms  | Criterion   | -          |    ✅   |
-| `rust`  | [dmp v0.2.0](https://crates.io/crates/dmp)                                               | 56.609 ms | 14.654 ms  | Criterion   | -          |    ✅   |
-| `rust`  | [diff-match-patch-rs](https://github.com/AnubhabB/diff-match-patch-rs.git)<sup>our</sup> | 55.149 ms | 631.13 µs  | Criterion   | `Efficient`|    ✅   |
-| `rust`  | [diff-match-patch-rs](https://github.com/AnubhabB/diff-match-patch-rs.git)<sup>our</sup> | 55.275 ms | 1.1703 ms  | Criterion   | `Compat`   |    ✅   |
-| `go`    | [go-diff](https://github.com/sergi/go-diff)                                              | 50.31 ms  | 135.2 ms   | go test     | -          |    ✅   |
+| `rust`  | [diff_match_patch v0.1.1](https://crates.io/crates/diff_match_patch)[^2]                 | 56.618 ms | 9.00 ms    | Criterion   | -          |    ✅   |
+| `rust`  | [dmp v0.2.0](https://crates.io/crates/dmp)                                               | 56.609 ms | 12.25 ms   | Criterion   | -          |    ✅   |
+| `rust`  | [diff-match-patch-rs](https://github.com/AnubhabB/diff-match-patch-rs.git)<sup>our</sup> | 34.660 ms | 533.17 µs  | Criterion   | `Efficient`|    ✅   |
+| `rust`  | [diff-match-patch-rs](https://github.com/AnubhabB/diff-match-patch-rs.git)<sup>our</sup> | 35.095 ms | 993.90 µs  | Criterion   | `Compat`   |    ✅   |
+| `go`    | [go-diff](https://github.com/sergi/go-diff)                                              | 40.31 ms  | 135.2 ms   | go test     | -          |    ✅   |
 | `node`  | [diff-match-patch](https://www.npmjs.com/package/diff-match-patch)[^1]                   | 246.90 ms | 1.07 ms    | tinybench   | -          |    ❌   |
 | `python`| [diff-match-patch](https://pypi.org/project/diff-match-patch/)                           | 1.01 s    | 0.25 ms    | timeit      | -          |    ✅   |
 
