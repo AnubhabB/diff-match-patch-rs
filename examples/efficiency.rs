@@ -9,7 +9,8 @@ use diff_match_patch_rs::{DiffMatchPatch, Efficient, Error, PatchInput};
 /// `Efficiency mode` is not compatible with other libraries or implementations of `diff-match-patch`.
 /// Use `efficiency` mode ONLY if you are using this `crate` across your stack
 /// If you want a standardized implementation (working across libraries), use `Compat` mode istead
-
+///
+///
 // This is the source text
 const TXT_OLD: &str = "I am the very model of a modern Major-General,
 I've information vegetable, animal, and mineral,

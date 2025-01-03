@@ -4,7 +4,7 @@
 [<img alt="crates.io" src="https://img.shields.io/crates/v/diff-match-patch-rs" height="20">](https://crates.io/crates/diff-match-patch-rs)
 [<img alt="docs.rs" src="https://img.shields.io/badge/docs.rs-diff_match_patch_rs?style=for-the-badge&logo=docs.rs&labelColor=%23555555" height="20">](https://docs.rs/diff-match-patch-rs)
 
-A very **fast**, **accurate** and **wasm ready** port of [Diff Match Patch](https://github.com/dmsnell/diff-match-patch) in Rust. The diff implementation is based on [Myers' diff algorithm](https://neil.fraser.name/writing/diff/myers.pdf).
+**Fastest**, **accurate** and **wasm ready** implementation of [Diff Match Patch](https://github.com/dmsnell/diff-match-patch) in Rust based on [Myers' diff algorithm](https://neil.fraser.name/writing/diff/myers.pdf).
 
 ## Highlights of this crate
 - Exposes two modes of operating with `diff-match-patch`, a `Efficient` mode and `Compat` mode. While the `Efficient` mode squeezes out the max performance the `Compat` mode ensures compatibility across other libraries or implementations (rust or otherwise). According to [Benchmarks](#benchmarks), our slower `Compat` mode is still faster than other implementations in rust.
@@ -17,11 +17,29 @@ A very **fast**, **accurate** and **wasm ready** port of [Diff Match Patch](http
 - Added a `fuzzer` for sanity
 - Exposes the same APIs as [Diff Match Patch](https://github.com/dmsnell/diff-match-patch) with minor changes to make it more idiomatic in Rust.
 
+## Benchmarks
+Benchmarks are maintained [diff-match-patch-bench repository](https://github.com/AnubhabB/diff-match-patch-rs-bench)
+
+| Lang.   | Library                                                                                  | Diff Avg. | Patch Avg. | Bencher    | Mode        | Correct |
+|:-------:|:----------------------------------------------------------------------------------------:|:---------:|:----------:|:----------:|:-----------:|:-------:|
+| `rust`  | [diff_match_patch v0.1.1](https://crates.io/crates/diff_match_patch)[^1]                 | 56.618 ms | 9.00 ms    | Criterion   | -          |    ✅   |
+| `rust`  | [dmp v0.2.0](https://crates.io/crates/dmp)                                               | 56.609 ms | 12.25 ms   | Criterion   | -          |    ✅   |
+| `rust`  | [diff-match-patch-rs](https://github.com/AnubhabB/diff-match-patch-rs.git)<sup>our</sup> | 32.795 ms | 533.17 µs  | Criterion   | `Efficient`|    ✅   |
+| `rust`  | [diff-match-patch-rs](https://github.com/AnubhabB/diff-match-patch-rs.git)<sup>our</sup> | 33.222 ms | 993.90 µs  | Criterion   | `Compat`   |    ✅   |
+| `go`    | [go-diff](https://github.com/sergi/go-diff)[^2]                                          | 30.31 ms  | 118.2 ms   | go test     | -          |    ❗   |
+| `node`  | [diff-match-patch](https://www.npmjs.com/package/diff-match-patch)[^3]                   | 246.90 ms | 1.07 ms    | tinybench   | -          |    ❌   |
+| `python`| [diff-match-patch](https://pypi.org/project/diff-match-patch/)                           | 1.01 s    | 0.25 ms    | timeit      | -          |    ✅   |
+
+
+[^1]: [diff_match_patch](https://crates.io/crates/diff_match_patch) Adds an extra clone to the iterator because the `patch_apply` method takes mutable refc. to `diffs`.
+[^2]: [go-diff](https://github.com/sergi/go-diff) is technically a correct implementation but it generates far more diffs than any other implementation I've tested. E.g. In our test data [here](https://github.com/AnubhabB/diff-match-patch-rs-bench/testdata) the go lib ends up generating `~3000` diffs while other implementations are generating `~2300` diffs. My guess is one of the cleanup passes are skipped by `go-diff`.
+[^3]: [diff-match-patch](https://www.npmjs.com/package/diff-match-patch) generated `patch text` and `delta` breaks on `unicode surrogates`.
+
 ## Usage Examples
 
 ```toml
 [dependencies]
-diff-match-patch-rs = "0.3.2"
+diff-match-patch-rs = "0.4.0"
 ```
 
 ### `Effitient` mode
@@ -174,23 +192,6 @@ E.g. we initiated a `diff` in the `Efficient` mode with `dmp.diff_main::<Efficie
 Please checkout the `examples` directory of the [source repo](https://github.com/AnubhabB/diff-match-patch-rs/tree/main/examples) for a few common use-cases.
 
 <div class="warning">The `Effitient` and `Compat` modes are mutually exclusive and will not generate correct output if used interchangibly at source and destination</div>
-
-## Benchmarks
-Benchmarks are maintained [diff-match-patch-bench repository](https://github.com/AnubhabB/diff-match-patch-rs-bench)
-
-| Lang.   | Library                                                                                  | Diff Avg. | Patch Avg. | Bencher    | Mode        | Correct |
-|:-------:|:----------------------------------------------------------------------------------------:|:---------:|:----------:|:----------:|:-----------:|:-------:|
-| `rust`  | [diff_match_patch v0.1.1](https://crates.io/crates/diff_match_patch)[^2]                 | 68.108 ms | 10.596 ms | Criterion   | -           |    ✅   |
-| `rust`  | [dmp v0.2.0](https://crates.io/crates/dmp)                                               | 69.019 ms | 14.654 ms | Criterion   | -           |    ✅   |
-| `rust`  | [diff-match-patch-rs](https://github.com/AnubhabB/diff-match-patch-rs.git)<sup>our</sup> | 64.66 ms  | 631.13 µs | Criterion   | `Efficient` |    ✅   |
-| `rust`  | [diff-match-patch-rs](https://github.com/AnubhabB/diff-match-patch-rs.git)<sup>our</sup> | 64.68 ms  | 1.1703 ms | Criterion   | `Compat`    |    ✅   |
-| `go`    | [go-diff](https://github.com/sergi/go-diff)                                              | 50.31 ms  | 135.2 ms  | go test     | -           |    ✅   |
-| `node`  | [diff-match-patch](https://www.npmjs.com/package/diff-match-patch)[^1]                   | 246.90 ms | 1.07 ms   | tinybench   | -           |    ❌   |
-| `python`| [diff-match-patch](https://pypi.org/project/diff-match-patch/)                           | 1.01 s    | 0.25 ms   | timeit      | -           |    ✅   |
-
-
-[^1]: [diff-match-patch](https://www.npmjs.com/package/diff-match-patch) generated `patch text` and `delta` breaks on `unicode surrogates`.
-[^2]: Adds an extra clone to the iterator because the `patch_apply` method takes mutable refc. to `diffs`.
 
 ## Gotchas
 **Diff incompatibility with `JavaScript` libs**:

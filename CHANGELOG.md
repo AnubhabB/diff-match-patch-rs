@@ -1,5 +1,11 @@
 # CHANGELOG.md
 
+## 0.4.0
+
+Performance:
+
+    - Non-algorithmic improvements to `Diff` implementation resulting in `~41%` improvements over previous [benchmarks](). [Here's]() a writeup of the experiments.
+
 ## 0.3.2
 
 Fix:

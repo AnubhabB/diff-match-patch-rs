@@ -2,7 +2,7 @@ use diff_match_patch_rs::{DiffMatchPatch, Efficient, Error, PatchInput};
 
 /// An example flow of the effitient mode
 /// This demo will cover creating a diff of two texts and then `patching` it back to get the original text
-
+///
 // This is the source text
 const TXT_OLD: &str = "I am the very model of a modern Major-General,
 I've information vegetable, animal, and mineral,
