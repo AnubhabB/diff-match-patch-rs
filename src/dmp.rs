@@ -679,8 +679,13 @@ impl DiffMatchPatch {
 
         {
             let v_trg = v_offset as usize + 1;
-            v1[v_trg] = 0;
-            v2[v_trg] = 0;
+            if v_trg < v1.len() {
+                v1[v_trg] = 0;
+            }
+
+            if v_trg < v2.len() {
+                v2[v_trg] = 0;
+            }
         }
 
         let delta = old_len - new_len;
@@ -714,15 +719,21 @@ impl DiffMatchPatch {
                 let (x1, y1) = {
                     let k1_offset = v_offset + k1;
 
-                    let v1_prev = if (1..v1.len() as isize).contains(&k1_offset) {
-                        v1[k1_offset as usize - 1]
-                    } else {
-                        -1
+                    let v1_prev = {
+                        let prev_idx = (k1_offset - 1) as usize;
+                        if prev_idx < v1.len() {
+                            v1[prev_idx]
+                        } else {
+                            -1
+                        }
                     };
-                    let v1_next = if (0..v1.len() as isize).contains(&(k1_offset + 1)) {
-                        v1[k1_offset as usize + 1]
-                    } else {
-                        -1
+                    let v1_next = {
+                        let next_idx = (k1_offset + 1) as usize;
+                        if next_idx < v1.len() {
+                            v1[next_idx]
+                        } else {
+                            -1
+                        }
                     };
 
                     let mut x1 = if k1 == -edit_dist || (k1 != edit_dist && v1_prev < v1_next) {
@@ -751,10 +762,13 @@ impl DiffMatchPatch {
                     // Ran off the bottom of the graph.
                     k1start += 2;
                 } else if front {
-                    let k2_offset = v_offset + delta - k1;
-                    if (0..v_len).contains(&k2_offset) && v2[k2_offset as usize] != -1 {
+                    let k2_offset = (v_offset + delta - k1) as usize;
+                    if (0..v_len as usize).contains(&k2_offset)
+                        && k2_offset < v2.len()
+                        && v2[k2_offset] != -1
+                    {
                         // Mirror x2 onto top-left coordinate system.
-                        let x2 = old_len - v2[k2_offset as usize];
+                        let x2 = old_len - v2[k2_offset];
                         if x1 >= x2 {
                             // Overlap detected.
                             return T::bisect_split(
@@ -775,15 +789,17 @@ impl DiffMatchPatch {
             let mut k2 = k2start - edit_dist;
             while k2 < edit_dist + 1 - k2end {
                 let (mut x2, y2) = {
-                    let k2_offset = v_offset + k2;
+                    let k2_offset = (v_offset + k2) as usize;
+                    let prev_idx = k2_offset - 1;
+                    let next_idx = k2_offset + 1;
 
-                    let v2_prev = if (0..v2.len() as isize).contains(&(k2_offset - 1)) {
-                        v2[k2_offset as usize - 1]
+                    let v2_prev = if prev_idx < v2.len() {
+                        v2[prev_idx]
                     } else {
                         -1
                     };
-                    let v2_next = if (0..v2.len() as isize).contains(&(k2_offset + 1)) {
-                        v2[k2_offset as usize + 1]
+                    let v2_next = if next_idx < v2.len() {
+                        v2[next_idx]
                     } else {
                         -1
                     };
@@ -799,8 +815,8 @@ impl DiffMatchPatch {
                     y2 = yi as isize;
                     x2 = xi as isize;
 
-                    if (0..v2.len() as isize).contains(&k2_offset) {
-                        v2[k2_offset as usize] = x2;
+                    if k2_offset < v2.len() {
+                        v2[k2_offset] = x2;
                     }
 
                     (x2, y2)
@@ -813,10 +829,11 @@ impl DiffMatchPatch {
                     // Ran off the top of the graph.
                     k2start += 2;
                 } else if !front {
-                    let k1_offset = v_offset + delta - k2;
-                    if (0..v_len).contains(&k1_offset) && v1[k1_offset as usize] != -1 {
-                        let x1 = v1[k1_offset as usize];
-                        let y1 = v_offset + x1 - k1_offset;
+                    let k1_offset = (v_offset + delta - k2) as usize;
+                    if k1_offset < v_len as usize && k1_offset < v1.len() && v1[k1_offset] != -1 {
+                        // if (0..v_len).contains(&k1_offset) && k1_offset < v1.len() as isize && v1[k1_offset as usize] != -1 {
+                        let x1 = v1[k1_offset];
+                        let y1 = v_offset + x1 - k1_offset as isize;
                         // Mirror x2 onto top-left coordinate system.
                         x2 = old_len - x2;
                         if x1 >= x2 {
