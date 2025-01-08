@@ -4,7 +4,7 @@
 
 Performance:
 
-    - Non-algorithmic improvements to `Diff` implementation resulting in `~41%` improvements over previous [benchmarks](). [Here's]() a writeup of the experiments.
+    - Non-algorithmic improvements to `Diff` implementation resulting in `~41%` improvements over previous benchmarks. Experiments: https://blog.anubhab.me/tech/optimizing-diff-match-patch/.
 
 ## 0.3.2
 
