@@ -449,10 +449,10 @@ impl DiffMatchPatch {
 
     // Quick line-level diff on both strings, then rediff the parts for greater accuracy
     // This speedup can produce non-minimal diffs
-    fn line_mode<'a, T: DType>(
+    fn line_mode<T: DType>(
         &self,
-        old: &'a [T],
-        new: &'a [T],
+        old: &[T],
+        new: &[T],
         deadline: Option<Time>,
     ) -> Result<Vec<Diff<T>>, crate::errors::Error> {
         let mut diffs = {
@@ -530,10 +530,10 @@ impl DiffMatchPatch {
         Ok(diffs)
     }
 
-    pub(crate) fn diff_lines<'a>(
+    pub(crate) fn diff_lines(
         &self,
-        old: &'a [usize],
-        new: &'a [usize],
+        old: &[usize],
+        new: &[usize],
         deadline: Option<Time>,
     ) -> Result<Vec<Diff<usize>>, crate::errors::Error> {
         if old == new {
@@ -586,10 +586,10 @@ impl DiffMatchPatch {
         Ok(diffs)
     }
 
-    fn compute_lines<'a>(
+    fn compute_lines(
         &self,
-        old: &'a [usize],
-        new: &'a [usize],
+        old: &[usize],
+        new: &[usize],
         deadline: Option<Time>,
     ) -> Result<Vec<Diff<usize>>, crate::errors::Error> {
         // returning all of the new part
@@ -662,31 +662,38 @@ impl DiffMatchPatch {
     // Find the 'middle snake' of a diff, split the problem in two
     // and return the recursively constructed diff.
     // See Myers 1986 paper: An O(ND) Difference Algorithm and Its Variations.
-    pub fn bisect<'a, T: DType>(
+    pub fn bisect<T: DType>(
         &self,
-        old: &'a [T],
-        new: &'a [T],
+        old: &[T],
+        new: &[T],
         deadline: Option<Time>,
     ) -> Result<Vec<Diff<T>>, crate::errors::Error> {
-        let old_len = old.len() as isize;
-        let new_len = new.len() as isize;
+        // Micro optimization:
+        // Do all setup before casting to isize
+        let mut v;
+        let (v_offset, v_len, v1, v2, old_len, new_len) = {
+            let v_offset = (old.len() + new.len() + 1) / 2;
+            let v_len = v_offset * 2;
 
-        let v_offset = (old_len + new_len + 1) >> 1; // same as `max_d`, (/ 2)
-        let v_len = v_offset << 1; // (* 2)
-
-        let mut v = vec![-1_isize; (v_len << 1) as usize];
-        let (v1, v2) = v.split_at_mut(v_len as usize);
-
-        {
-            let v_trg = v_offset as usize + 1;
+            v = vec![-1_isize; v_len * 2];
+            let (v1, v2) = v.split_at_mut(v_len);
+            let v_trg = v_offset + 1;
             if v_trg < v1.len() {
                 v1[v_trg] = 0;
             }
-
             if v_trg < v2.len() {
                 v2[v_trg] = 0;
             }
-        }
+
+            (
+                v_offset as isize,
+                v_len as isize,
+                v1,
+                v2,
+                old.len() as isize,
+                new.len() as isize,
+            )
+        };
 
         let delta = old_len - new_len;
         // If the total number of characters is odd, then the front path will collide
@@ -856,9 +863,9 @@ impl DiffMatchPatch {
         Ok(vec![Diff::delete(old), Diff::insert(new)])
     }
 
-    fn bisect_fwd_path_i<'a, T: DType>(
-        old: &'a [T],
-        new: &'a [T],
+    fn bisect_fwd_path_i<T: DType>(
+        old: &[T],
+        new: &[T],
         x1: usize,
         y1: usize,
     ) -> (usize, usize) {
@@ -877,9 +884,9 @@ impl DiffMatchPatch {
         (x1, y1)
     }
 
-    fn bisect_rev_path_i<'a, T: DType>(
-        old: &'a [T],
-        new: &'a [T],
+    fn bisect_rev_path_i<T: DType>(
+        old: &[T],
+        new: &[T],
         x2: usize,
         y2: usize,
     ) -> (usize, usize) {
@@ -1300,11 +1307,7 @@ impl DiffMatchPatch {
     // Scores range from 6 (best) to 0 (worst)
     fn cleanup_semantic_score<T: DType>(one: &[T], two: &[T]) -> u8 {
         let (char1, char2) = if let (Some(&char1), Some(&char2)) = (one.last(), two.first()) {
-            if let (Some(c1), Some(c2)) = (char1.as_char(), char2.as_char()) {
-                (c1, c2)
-            } else {
-                return 6;
-            }
+            (char1, char2)
         } else {
             return 6;
         };
@@ -1318,8 +1321,8 @@ impl DiffMatchPatch {
         let whitespace_1 = char1.is_whitespace();
         let whitespace_2 = char2.is_whitespace();
 
-        let linebreak_1 = whitespace_1 && (char1 == '\n' || char1 == '\r');
-        let linebreak_2 = whitespace_2 && (char2 == '\n' || char2 == '\r');
+        let linebreak_1 = whitespace_1 && (char1.is_newline() || char1.is_carriage());
+        let linebreak_2 = whitespace_2 && (char2.is_newline() || char2.is_carriage());
 
         let blankline_1 = linebreak_1 && T::is_linebreak_end(one);
         let blankline_2 = linebreak_2 && T::is_linebreak_start(two);
@@ -1330,13 +1333,13 @@ impl DiffMatchPatch {
         } else if linebreak_1 || linebreak_2 {
             // Four points for line breaks.
             4
-        } else if !char1.is_alphanumeric() && !whitespace_1 && whitespace_2 {
+        } else if !char1.is_alphanum() && !whitespace_1 && whitespace_2 {
             // Three points for end of sentences.
             3
         } else if whitespace_1 || whitespace_2 {
             // 2 for whitespace
             2
-        } else if !char1.is_alphanumeric() || !char2.is_alphanumeric() {
+        } else if !char1.is_alphanum() || !char2.is_alphanum() {
             // 1 for not alphanumeric
             1
         } else {
@@ -1871,12 +1874,10 @@ impl DiffMatchPatch {
         let mut linehash: HashMap<&'a [T], usize> = HashMap::new();
 
         // Allocate 2/3rds of the UTF16::MAX (65535) value space for text1, the rest for text2.
-        let mut maxlines = 40000;
-        let chars_old = Self::lines_to_chars_internal(old, &mut lines, &mut linehash, maxlines);
+        let chars_old = Self::lines_to_chars_internal(old, &mut lines, &mut linehash, 40000);
 
         // This basically represents the U16::MAX value
-        maxlines = 65535;
-        let chars_new = Self::lines_to_chars_internal(new, &mut lines, &mut linehash, maxlines);
+        let chars_new = Self::lines_to_chars_internal(new, &mut lines, &mut linehash, 65535);
 
         LineToChars {
             chars_old,
@@ -1898,7 +1899,7 @@ impl DiffMatchPatch {
         let mut broke = false;
         let mut cursor = 0;
 
-        text.split_inclusive(|u| *u == T::from_char('\n'))
+        text.split_inclusive(|u| u.is_newline())
             .enumerate()
             .take(take)
             .for_each(|(idx, line)| {
