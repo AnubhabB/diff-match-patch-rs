@@ -52,10 +52,18 @@ pub trait DType: Copy + Ord + Eq + Hash {
     fn from_str(str: &str) -> Vec<Self>;
     fn to_string(data: &[Self]) -> Result<String, crate::Error>;
 
-    fn is_whitespace(self) -> bool { unimplemented!() }
-    fn is_newline(self) -> bool { unimplemented!() }
-    fn is_carriage(self) -> bool { unimplemented!() }
-    fn is_alphanum(self) -> bool { unimplemented!() }
+    fn is_whitespace(self) -> bool {
+        unimplemented!()
+    }
+    fn is_newline(self) -> bool {
+        unimplemented!()
+    }
+    fn is_carriage(self) -> bool {
+        unimplemented!()
+    }
+    fn is_alphanum(self) -> bool {
+        unimplemented!()
+    }
 
     fn is_linebreak_end(input: &[Self]) -> bool;
     fn is_linebreak_start(input: &[Self]) -> bool;
@@ -114,14 +122,12 @@ impl DType for u8 {
             || input.starts_with(b"\n\n")
     }
 
-
     fn percent_encode(input: &[Self]) -> Vec<Self> {
         percent_encoding::percent_encode(input, ENCODE_SET)
             .collect::<String>()
             .as_bytes()
             .to_vec()
     }
-
 
     fn percent_decode(input: &[Self]) -> Vec<Self> {
         percent_decode(input).collect()
