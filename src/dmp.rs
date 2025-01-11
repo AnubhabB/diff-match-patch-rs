@@ -474,10 +474,6 @@ impl DiffMatchPatch {
         Self::cleanup_semantic(&mut diffs);
 
         // Rediff any replacement blocks, this time character-by-character.
-
-        // Add a dummy entry at the end.
-        // diffs.push(Diff::equal(&[]));
-
         let mut pointer = 0_usize;
 
         // count of bytes inserted
@@ -950,7 +946,7 @@ impl DiffMatchPatch {
     ) -> Option<HalfMatch<'a, T>> {
         // Start with a 1/4 length substring at position i as a seed.
         let seed = {
-            let end = idx + (long.len() >> 2);
+            let end = idx + (long.len() / 4);
             if idx < long.len() && end < long.len() {
                 &long[idx..end]
             } else {
