@@ -703,6 +703,8 @@ impl DiffMatchPatch {
         new: &[T],
         deadline: Option<Time>,
     ) -> Result<Vec<Diff<T>>, crate::errors::Error> {
+        type Int = isize;
+
         // Micro optimization:
         // Do all setup before casting to isize
         let mut v;
@@ -710,7 +712,7 @@ impl DiffMatchPatch {
             let v_offset = (old.len() + new.len() + 1) / 2;
             let v_len = v_offset * 2;
 
-            v = vec![-1_isize; v_len * 2];
+            v = vec![-1 as Int; v_len * 2];
             let (v1, v2) = v.split_at_mut(v_len);
             let v_trg = v_offset + 1;
             if v_trg < v1.len() {
@@ -721,12 +723,12 @@ impl DiffMatchPatch {
             }
 
             (
-                v_offset as isize,
-                v_len as isize,
+                v_offset as Int,
+                v_len as Int,
                 v1,
                 v2,
-                old.len() as isize,
-                new.len() as isize,
+                old.len() as Int,
+                new.len() as Int,
             )
         };
 
@@ -755,144 +757,122 @@ impl DiffMatchPatch {
                 }
             }
 
-            // Walk the front path one step.
-            let mut k1 = k1start - edit_dist;
-            while k1 < edit_dist + 1 - k1end {
-                let (x1, y1) = {
-                    let k1_offset = v_offset + k1;
-
-                    let v1_prev = {
-                        let prev_idx = (k1_offset - 1) as usize;
-                        if prev_idx < v1.len() {
-                            v1[prev_idx]
-                        } else {
-                            -1
-                        }
-                    };
-                    let v1_next = {
-                        let next_idx = (k1_offset + 1) as usize;
-                        if next_idx < v1.len() {
-                            v1[next_idx]
-                        } else {
-                            -1
-                        }
-                    };
-
-                    let mut x1 = if k1 == -edit_dist || (k1 != edit_dist && v1_prev < v1_next) {
-                        v1_next
-                    } else {
-                        v1_prev + 1
-                    };
-
-                    let mut y1 = x1 - k1;
-                    let (xi, yi) = Self::bisect_fwd_path_i(old, new, x1 as usize, y1 as usize);
-
-                    y1 = yi as isize;
-                    x1 = xi as isize;
-
-                    if (0..v1.len() as isize).contains(&k1_offset) {
-                        v1[k1_offset as usize] = x1;
-                    }
-
-                    (x1, y1)
-                };
-
-                if x1 > old_len {
-                    // Ran off the right of the graph.
-                    k1end += 2;
-                } else if y1 > new_len {
-                    // Ran off the bottom of the graph.
-                    k1start += 2;
-                } else if front {
-                    let k2_offset = (v_offset + delta - k1) as usize;
-                    if k2_offset < v_len as usize && k2_offset < v2.len() && v2[k2_offset] != -1 {
-                        // Mirror x2 onto top-left coordinate system.
-                        let x2 = old_len - v2[k2_offset];
-                        if x1 >= x2 {
-                            // Overlap detected.
-                            return T::bisect_split(
-                                self,
-                                old,
-                                new,
-                                x1 as usize,
-                                y1 as usize,
-                                deadline,
-                            );
-                        }
-                    }
+            (k1start, k1end) = {
+                let (k1s, k1e, overlap) = Self::bisect_fwd(
+                    old,
+                    new,
+                    (old_len, new_len, delta, front),
+                    (v_offset, v_len),
+                    v1,
+                    v2,
+                    (k1start, k1end),
+                    edit_dist,
+                );
+                if let Some((x1, x2)) = overlap {
+                    return T::bisect_split(self, old, new, x1, x2, deadline);
                 }
-                k1 += 2;
-            }
 
-            // Walk the reverse path one step.
-            let mut k2 = k2start - edit_dist;
-            while k2 < edit_dist + 1 - k2end {
-                let (mut x2, y2) = {
-                    let k2_offset = (v_offset + k2) as usize;
-                    let prev_idx = k2_offset - 1;
-                    let next_idx = k2_offset + 1;
+                (k1s, k1e)
+            };
 
-                    let v2_prev = if prev_idx < v2.len() {
-                        v2[prev_idx]
-                    } else {
-                        -1
-                    };
-                    let v2_next = if next_idx < v2.len() {
-                        v2[next_idx]
-                    } else {
-                        -1
-                    };
-
-                    let mut x2 = if k2 == -edit_dist || (k2 != edit_dist && v2_prev < v2_next) {
-                        v2_next
-                    } else {
-                        v2_prev + 1
-                    };
-
-                    let mut y2 = x2 - k2;
-                    let (xi, yi) = Self::bisect_rev_path_i(old, new, x2 as usize, y2 as usize);
-                    y2 = yi as isize;
-                    x2 = xi as isize;
-
-                    if k2_offset < v2.len() {
-                        v2[k2_offset] = x2;
-                    }
-
-                    (x2, y2)
-                };
-
-                if x2 > old_len {
-                    // Ran off the left of the graph.
-                    k2end += 2;
-                } else if y2 > new_len {
-                    // Ran off the top of the graph.
-                    k2start += 2;
-                } else if !front {
-                    let k1_offset = (v_offset + delta - k2) as usize;
-                    if k1_offset < v_len as usize && k1_offset < v1.len() && v1[k1_offset] != -1 {
-                        // if (0..v_len).contains(&k1_offset) && k1_offset < v1.len() as isize && v1[k1_offset as usize] != -1 {
-                        let x1 = v1[k1_offset];
-                        let y1 = v_offset + x1 - k1_offset as isize;
-                        // Mirror x2 onto top-left coordinate system.
-                        x2 = old_len - x2;
-                        if x1 >= x2 {
-                            // Overlap detected.
-                            return T::bisect_split(
-                                self,
-                                old,
-                                new,
-                                x1 as usize,
-                                y1 as usize,
-                                deadline,
-                            );
-                        }
-                    }
+            (k2start, k2end) = {
+                let (k1s, k1e, overlap) = Self::bisect_rev(
+                    old,
+                    new,
+                    (old_len, new_len, delta, front),
+                    (v_offset, v_len),
+                    v1,
+                    v2,
+                    (k2start, k2end),
+                    edit_dist,
+                );
+                if let Some((x1, x2)) = overlap {
+                    return T::bisect_split(self, old, new, x1, x2, deadline);
                 }
-                k2 += 2;
-            }
+
+                (k1s, k1e)
+            };
         }
 
         Ok(vec![Diff::delete(old), Diff::insert(new)])
+    }
+
+    // Walk the front path one step.
+    #[allow(clippy::too_many_arguments)]
+    #[inline]
+    fn bisect_fwd<T: DType>(
+        old: &[T],
+        new: &[T],
+        (old_len, new_len, delta, front): (isize, isize, isize, bool), // length related: old_len, new_len, delta, front
+        (v_offset, v_len): (isize, isize),                             // v_offset, v_len
+        v1: &mut [isize],
+        v2: &mut [isize],
+        (mut k1start, mut k1end): (isize, isize), // k related: k1start, k1end
+        edit_dist: isize,
+    ) -> (isize, isize, Option<(usize, usize)>) {
+        let mut k1 = k1start - edit_dist;
+
+        while k1 < edit_dist + 1 - k1end {
+            let (x1, y1) = {
+                let k1_offset = v_offset + k1;
+
+                let v1_prev = {
+                    let prev_idx = (k1_offset - 1) as usize;
+                    if prev_idx < v1.len() {
+                        v1[prev_idx]
+                    } else {
+                        -1
+                    }
+                };
+                let v1_next = {
+                    let next_idx = (k1_offset + 1) as usize;
+                    if next_idx < v1.len() {
+                        v1[next_idx]
+                    } else {
+                        -1
+                    }
+                };
+
+                let mut x1 = if k1 == -edit_dist || (k1 != edit_dist && v1_prev < v1_next) {
+                    v1_next
+                } else {
+                    v1_prev + 1
+                };
+
+                let mut y1 = x1 - k1;
+                let (xi, yi) = Self::bisect_fwd_path_i(old, new, x1 as usize, y1 as usize);
+
+                y1 = yi as isize;
+                x1 = xi as isize;
+
+                if (0..v1.len() as isize).contains(&k1_offset) {
+                    v1[k1_offset as usize] = x1;
+                }
+
+                (x1, y1)
+            };
+
+            if x1 > old_len {
+                // Ran off the right of the graph.
+                k1end += 2;
+            } else if y1 > new_len {
+                // Ran off the bottom of the graph.
+                k1start += 2;
+            } else if front {
+                let k2_offset = (v_offset + delta - k1) as usize;
+                if k2_offset < v_len as usize && k2_offset < v2.len() && v2[k2_offset] != -1 {
+                    // Mirror x2 onto top-left coordinate system.
+                    let x2 = old_len - v2[k2_offset];
+                    if x1 >= x2 {
+                        // Overlap detected.
+                        return (k1start, k1end, Some((x1 as usize, y1 as usize)));
+                    }
+                }
+            }
+            k1 += 2;
+        }
+
+        (k1start, k1end, None)
     }
 
     fn bisect_fwd_path_i<T: DType>(old: &[T], new: &[T], x1: usize, y1: usize) -> (usize, usize) {
@@ -909,6 +889,89 @@ impl DiffMatchPatch {
         }
 
         (x1, y1)
+    }
+
+    // Walk the reverse path one step.
+    #[allow(clippy::too_many_arguments)]
+    #[inline]
+    fn bisect_rev<T: DType>(
+        old: &[T],
+        new: &[T],
+        (old_len, new_len, delta, front): (isize, isize, isize, bool), // length related: old_len, new_len, delta, front
+        (v_offset, v_len): (isize, isize),                             // v_offset, v_len
+        v1: &mut [isize],
+        v2: &mut [isize],
+        (mut k2start, mut k2end): (isize, isize), // k related: k1start, k1end
+        edit_dist: isize,
+    ) -> (isize, isize, Option<(usize, usize)>) {
+        let mut k2 = k2start - edit_dist;
+        while k2 < edit_dist + 1 - k2end {
+            let (mut x2, y2) = {
+                let k2_offset = (v_offset + k2) as usize;
+                let prev_idx = k2_offset - 1;
+                let next_idx = k2_offset + 1;
+
+                let v2_prev = if prev_idx < v2.len() {
+                    v2[prev_idx]
+                } else {
+                    -1
+                };
+                let v2_next = if next_idx < v2.len() {
+                    v2[next_idx]
+                } else {
+                    -1
+                };
+
+                let mut x2 = if k2 == -edit_dist || (k2 != edit_dist && v2_prev < v2_next) {
+                    v2_next
+                } else {
+                    v2_prev + 1
+                };
+
+                let mut y2 = x2 - k2;
+                let (xi, yi) = Self::bisect_rev_path_i(old, new, x2 as usize, y2 as usize);
+                y2 = yi as isize;
+                x2 = xi as isize;
+
+                if k2_offset < v2.len() {
+                    v2[k2_offset] = x2;
+                }
+
+                (x2, y2)
+            };
+
+            if x2 > old_len {
+                // Ran off the left of the graph.
+                k2end += 2;
+            } else if y2 > new_len {
+                // Ran off the top of the graph.
+                k2start += 2;
+            } else if !front {
+                let k1_offset = (v_offset + delta - k2) as usize;
+                if k1_offset < v_len as usize && k1_offset < v1.len() && v1[k1_offset] != -1 {
+                    // if (0..v_len).contains(&k1_offset) && k1_offset < v1.len() as isize && v1[k1_offset as usize] != -1 {
+                    let x1 = v1[k1_offset];
+                    let y1 = v_offset + x1 - k1_offset as isize;
+                    // Mirror x2 onto top-left coordinate system.
+                    x2 = old_len - x2;
+                    if x1 >= x2 {
+                        // Overlap detected.
+                        return (k2start, k2end, Some((x1 as usize, y1 as usize)));
+                        // return T::bisect_split(
+                        //     self,
+                        //     old,
+                        //     new,
+                        //     x1 as usize,
+                        //     y1 as usize,
+                        //     deadline,
+                        // );
+                    }
+                }
+            }
+            k2 += 2;
+        }
+
+        (k2start, k2end, None)
     }
 
     fn bisect_rev_path_i<T: DType>(old: &[T], new: &[T], x2: usize, y2: usize) -> (usize, usize) {
@@ -1495,9 +1558,15 @@ impl DiffMatchPatch {
         let mut changes = false;
         let mut pointer = 1;
 
-        while !diffs.is_empty() && (1..diffs.len() - 1).contains(&pointer) {
-            let (diff_prev, diff, diff_next) =
-                (&diffs[pointer - 1], &diffs[pointer], &diffs[pointer + 1]);
+        while !diffs.is_empty() {
+            let p_prev = pointer - 1;
+            let p_next = pointer + 1;
+
+            if p_next >= diffs.len() {
+                break;
+            }
+
+            let (diff_prev, diff, diff_next) = (&diffs[p_prev], &diffs[pointer], &diffs[p_next]);
 
             // This is a single edit surrounded by equalities.
             if diff_prev.op() == Ops::Equal && diff_next.op() == Ops::Equal {
@@ -1506,35 +1575,45 @@ impl DiffMatchPatch {
                 } else {
                     0
                 };
-                if &diff.data()[substr_idx..] == diff_prev.data() {
-                    // Shift the edit over the previous equality.
-                    let new_current_data = [
-                        diff_prev.data(),
-                        &diff.data()[..diff.size() - diff_prev.size()],
-                    ]
-                    .concat();
+
+                let diff_d = if substr_idx < diff.size() {
+                    &diff.data()[substr_idx..]
+                } else {
+                    &[]
+                };
+
+                if diff_d == diff_prev.data() {
+                    let diff_d = {
+                        let end = diff.size() - diff_prev.size();
+                        if end <= diff.data().len() {
+                            &diff.data()[..end]
+                        } else {
+                            &[]
+                        }
+                    };
+
+                    // Shift the edit over the previous equality
+                    let new_current_data = [diff_prev.data(), diff_d].concat();
+
                     let new_next_data = [diff_prev.data(), diff_next.data()].concat();
 
                     diffs[pointer].1 = new_current_data;
-                    diffs[pointer + 1].1 = new_next_data;
-                    diffs.remove(pointer - 1);
+                    diffs[p_next].1 = new_next_data;
+                    diffs.remove(p_prev);
 
                     changes = true;
-                } else if &diff.data()[..if diff_next.size() <= diff.size() {
-                    diff_next.size()
-                } else {
-                    diff.size()
-                }] == diff_next.data()
-                {
+                } else if &diff.data()[..diff_next.size().min(diff.size())] == diff_next.data() {
                     // Shift the edit over the next equality.
-                    diffs[pointer - 1].1 =
-                        [&diffs[pointer - 1].1[..], diffs[pointer + 1].data()].concat();
-                    diffs[pointer].1 = [
-                        &diffs[pointer].data()[diffs[pointer + 1].size()..],
-                        diffs[pointer + 1].data(),
-                    ]
-                    .concat();
-                    diffs.remove(pointer + 1);
+                    diffs[p_prev].1 = [diffs[p_prev].data(), diffs[p_next].data()].concat();
+
+                    let cur_data = if diffs[p_next].size() < diffs[pointer].size() {
+                        &diffs[pointer].data()[diffs[p_next].size()..]
+                    } else {
+                        &[]
+                    };
+
+                    diffs[pointer].1 = [cur_data, diffs[p_next].data()].concat();
+                    diffs.remove(p_next);
 
                     changes = true;
                 }

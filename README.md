@@ -1,4 +1,4 @@
-# diff-match-patch-rs: Efficient port of Google's diff-match-patch implemented in Rust
+# Efficient port of Google's diff-match-patch implemented in Rust
 
 [<img alt="github" src="https://img.shields.io/badge/github-Anubhab/diff_match_patch_rs-8da0cb?style=for-the-badge&labelColor=555555&logo=github" height="20">](https://github.com/AnubhabB/diff-match-patch-rs)
 [<img alt="crates.io" src="https://img.shields.io/crates/v/diff-match-patch-rs" height="20">](https://crates.io/crates/diff-match-patch-rs)
@@ -24,8 +24,8 @@ Benchmarks are maintained [diff-match-patch-bench repository](https://github.com
 |:-------:|:----------------------------------------------------------------------------------------:|:---------:|:----------:|:----------:|:-----------:|:-------:|
 | `rust`  | [diff_match_patch v0.1.1](https://crates.io/crates/diff_match_patch)[^1]                 | 56.618 ms | 9.00 ms    | Criterion   | -          |    ✅   |
 | `rust`  | [dmp v0.2.0](https://crates.io/crates/dmp)                                               | 56.609 ms | 12.25 ms   | Criterion   | -          |    ✅   |
-| `rust`  | [diff-match-patch-rs](https://github.com/AnubhabB/diff-match-patch-rs.git)<sup>our</sup> | 32.795 ms | 533.17 µs  | Criterion   | `Efficient`|    ✅   |
-| `rust`  | [diff-match-patch-rs](https://github.com/AnubhabB/diff-match-patch-rs.git)<sup>our</sup> | 33.222 ms | 993.90 µs  | Criterion   | `Compat`   |    ✅   |
+| `rust`  | [diff-match-patch-rs](https://github.com/AnubhabB/diff-match-patch-rs.git)<sup>our</sup> | 32.699 ms | 533.17 µs  | Criterion   | `Efficient`|    ✅   |
+| `rust`  | [diff-match-patch-rs](https://github.com/AnubhabB/diff-match-patch-rs.git)<sup>our</sup> | 33.171 ms | 993.90 µs  | Criterion   | `Compat`   |    ✅   |
 | `go`    | [go-diff](https://github.com/sergi/go-diff)[^2]                                          | 30.31 ms  | 118.2 ms   | go test     | -          |    ❗   |
 | `node`  | [diff-match-patch](https://www.npmjs.com/package/diff-match-patch)[^3]                   | 246.90 ms | 1.07 ms    | tinybench   | -          |    ❌   |
 | `python`| [diff-match-patch](https://pypi.org/project/diff-match-patch/)                           | 1.01 s    | 0.25 ms    | timeit      | -          |    ✅   |
@@ -39,7 +39,7 @@ Benchmarks are maintained [diff-match-patch-bench repository](https://github.com
 
 ```toml
 [dependencies]
-diff-match-patch-rs = "0.4.0"
+diff-match-patch-rs = "0.4.1"
 ```
 
 ### `Effitient` mode
