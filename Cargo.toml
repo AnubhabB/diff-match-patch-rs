@@ -1,6 +1,6 @@
 [package]
 name = "diff-match-patch-rs"
-version = "0.4.0"
+version = "0.4.1"
 edition = "2021"
 authors = ["Anubhab Bandyopadhyay"]
 homepage   = "https://docs.rs/diff-match-patch-rs"
