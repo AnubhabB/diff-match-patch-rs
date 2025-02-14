@@ -26,7 +26,6 @@ const ENCODE_SET: &AsciiSet = &CONTROLS
     .add(b'|');
 
 pub trait DType: Copy + Ord + Eq + Hash {
-    // fn differ(dmp: &DiffMatchPatch, txt_old: &str, txt_new: &str) -> Result<Vec<Diff<Self>>, crate::errors::Error>;
     fn bisect_split(
         dmp: &DiffMatchPatch,
         old: &[Self],
@@ -34,12 +33,37 @@ pub trait DType: Copy + Ord + Eq + Hash {
         x: usize,
         y: usize,
         deadline: Option<Time>,
-    ) -> Result<Vec<Diff<Self>>, crate::errors::Error>;
+    ) -> Result<Vec<Diff<Self>>, crate::errors::Error> {
+        let (old_a, new_a, old_b, new_b) = if x <= old.len() && y <= new.len() {
+            (&old[..x], &new[..y], &old[x..], &new[y..])
+        } else {
+            return Err(crate::errors::Error::InvalidInput);
+        };
+
+        // Compute both diffs serially.
+        let mut diffs_a = dmp.diff_internal(old_a, new_a, false, deadline)?;
+        diffs_a.append(&mut dmp.diff_internal(old_b, new_b, false, deadline)?);
+
+        Ok(diffs_a)
+    }
 
     fn from_char(c: char) -> Self;
     fn as_char(&self) -> Option<char>;
     fn from_str(str: &str) -> Vec<Self>;
     fn to_string(data: &[Self]) -> Result<String, crate::Error>;
+
+    fn is_whitespace(self) -> bool {
+        unimplemented!()
+    }
+    fn is_newline(self) -> bool {
+        unimplemented!()
+    }
+    fn is_carriage(self) -> bool {
+        unimplemented!()
+    }
+    fn is_alphanum(self) -> bool {
+        unimplemented!()
+    }
 
     fn is_linebreak_end(input: &[Self]) -> bool;
     fn is_linebreak_start(input: &[Self]) -> bool;
@@ -53,27 +77,6 @@ pub trait DType: Copy + Ord + Eq + Hash {
 }
 
 impl DType for u8 {
-    fn bisect_split(
-        dmp: &DiffMatchPatch,
-        old: &[u8],
-        new: &[u8],
-        x: usize,
-        y: usize,
-        deadline: Option<Time>,
-    ) -> Result<Vec<Diff<u8>>, crate::errors::Error> {
-        let old_a = &old[..x];
-        let new_a = &new[..y];
-
-        let old_b = &old[x..];
-        let new_b = &new[y..];
-
-        // Compute both diffs serially.
-        let mut diffs_a = dmp.diff_internal(old_a, new_a, false, deadline)?;
-        diffs_a.append(&mut dmp.diff_internal(old_b, new_b, false, deadline)?);
-
-        Ok(diffs_a)
-    }
-
     fn from_char(c: char) -> Self {
         c as u8
     }
@@ -86,19 +89,32 @@ impl DType for u8 {
         str.as_bytes().to_vec()
     }
 
-    #[inline]
     fn to_string(data: &[Self]) -> Result<String, crate::Error> {
         std::str::from_utf8(data)
             .map_err(|_| crate::Error::Utf8Error)
             .map(|s| s.to_string())
     }
 
-    #[inline]
+    fn is_whitespace(self) -> bool {
+        char::is_whitespace(self.into())
+    }
+
+    fn is_newline(self) -> bool {
+        char::is_newline(self.into())
+    }
+
+    fn is_carriage(self) -> bool {
+        self == b'\r'
+    }
+
+    fn is_alphanum(self) -> bool {
+        char::is_alphanumeric(self.into())
+    }
+
     fn is_linebreak_end(input: &[Self]) -> bool {
         input.ends_with(b"\n\n") || input.ends_with(b"\n\r\n")
     }
 
-    #[inline]
     fn is_linebreak_start(input: &[Self]) -> bool {
         input.starts_with(b"\r\n\n")
             || input.starts_with(b"\r\n\r\n")
@@ -106,7 +122,6 @@ impl DType for u8 {
             || input.starts_with(b"\n\n")
     }
 
-    #[inline]
     fn percent_encode(input: &[Self]) -> Vec<Self> {
         percent_encoding::percent_encode(input, ENCODE_SET)
             .collect::<String>()
@@ -114,12 +129,10 @@ impl DType for u8 {
             .to_vec()
     }
 
-    #[inline]
     fn percent_decode(input: &[Self]) -> Vec<Self> {
         percent_decode(input).collect()
     }
 
-    #[inline]
     fn humanize(diffs: &mut Vec<Diff<Self>>) -> Result<(), crate::Error> {
         let mut idx = 0_usize;
         let mut err_prefix = vec![];
@@ -214,27 +227,6 @@ impl DType for u8 {
 }
 
 impl DType for char {
-    fn bisect_split(
-        dmp: &DiffMatchPatch,
-        old: &[char],
-        new: &[char],
-        x: usize,
-        y: usize,
-        deadline: Option<Time>,
-    ) -> Result<Vec<Diff<char>>, crate::errors::Error> {
-        let old_a = &old[..x];
-        let new_a = &new[..y];
-
-        let old_b = &old[x..];
-        let new_b = &new[y..];
-
-        // Compute both diffs serially.
-        let mut diffs_a = dmp.diff_internal(old_a, new_a, false, deadline)?;
-        diffs_a.append(&mut dmp.diff_internal(old_b, new_b, false, deadline)?);
-
-        Ok(diffs_a)
-    }
-
     fn from_char(c: char) -> Self {
         c
     }
@@ -247,17 +239,30 @@ impl DType for char {
         str.chars().collect::<Vec<_>>()
     }
 
-    #[inline]
     fn to_string(data: &[Self]) -> Result<String, crate::Error> {
         Ok(data.iter().collect::<String>())
     }
 
-    #[inline]
+    fn is_whitespace(self) -> bool {
+        char::is_whitespace(self)
+    }
+
+    fn is_newline(self) -> bool {
+        self == '\n'
+    }
+
+    fn is_carriage(self) -> bool {
+        self == '\r'
+    }
+
+    fn is_alphanum(self) -> bool {
+        self.is_alphanumeric()
+    }
+
     fn is_linebreak_end(input: &[Self]) -> bool {
         input.ends_with(&['\n', '\n']) || input.ends_with(&['\n', '\r', '\n'])
     }
 
-    #[inline]
     fn is_linebreak_start(input: &[Self]) -> bool {
         input.starts_with(&['\r', '\n', '\n'])
             || input.starts_with(&['\r', '\n', '\r', '\n'])
@@ -265,7 +270,6 @@ impl DType for char {
             || input.starts_with(&['\n', '\n'])
     }
 
-    #[inline]
     fn percent_encode(input: &[Self]) -> Vec<Self> {
         let d = input
             .iter()
@@ -283,7 +287,6 @@ impl DType for char {
         Self::from_str(&encoded)
     }
 
-    #[inline]
     fn percent_decode(input: &[Self]) -> Vec<Self> {
         let ip = input.iter().collect::<String>();
         percent_decode(ip.as_bytes())
@@ -303,11 +306,11 @@ impl DType for usize {
         y: usize,
         deadline: Option<Time>,
     ) -> Result<Vec<Diff<usize>>, crate::errors::Error> {
-        let old_a = &old[..x];
-        let new_a = &new[..y];
-
-        let old_b = &old[x..];
-        let new_b = &new[y..];
+        let (old_a, new_a, old_b, new_b) = if x <= old.len() && y <= new.len() {
+            (&old[..x], &new[..y], &old[x..], &new[y..])
+        } else {
+            return Err(crate::errors::Error::InvalidInput);
+        };
 
         // Compute both diffs serially.
         let mut diffs_a = dmp.diff_lines(old_a, new_a, deadline)?;
@@ -336,17 +339,14 @@ impl DType for usize {
         unimplemented!()
     }
 
-    #[inline]
     fn is_linebreak_start(_: &[Self]) -> bool {
         unimplemented!()
     }
 
-    #[inline]
     fn percent_encode(_: &[Self]) -> Vec<Self> {
         unimplemented!()
     }
 
-    #[inline]
     fn percent_decode(_: &[Self]) -> Vec<Self> {
         unimplemented!()
     }
