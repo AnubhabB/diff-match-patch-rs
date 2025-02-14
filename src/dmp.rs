@@ -2144,7 +2144,6 @@ impl DiffMatchPatch {
             return None;
         }
 
-        // loc = Math.max(0, Math.min(loc, text.length));
         let loc = loc.min(text.len());
 
         if text == pattern {
