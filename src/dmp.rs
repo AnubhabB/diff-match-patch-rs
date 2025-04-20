@@ -2845,6 +2845,7 @@ impl DiffMatchPatch {
     pub fn new() -> Self {
         Self::default()
     }
+
     /// Find the differences between two texts (old and new).  Simplifies the problem by stripping any common prefix or suffix off the texts before diffing.
     ///
     /// Returns:
@@ -3039,6 +3040,64 @@ impl DiffMatchPatch {
             Err(crate::errors::Error::HtmlWithError(html))
         }
         // Ok(html)
+    }
+
+    /// Given a location in text1, compute and return the equivalent location in text2.
+    /// e.g. "The cat" -> "The big cat", 1->1, 4->8
+    /// # Example
+    /// ```
+    /// # use diff_match_patch_rs::{DiffMatchPatch, Error, Efficient};
+    /// # fn main() -> Result<(), Error> {
+    /// let dmp = DiffMatchPatch::new();
+    /// let diffs1 = dmp.diff_main::<Efficient>("The cat", "The big cat").unwrap();
+    /// assert_eq!(DiffMatchPatch::diff_x_index(&diffs1, 1), 1);
+    /// assert_eq!(DiffMatchPatch::diff_x_index(&diffs1, 4), 8);
+    /// let diffs2 = dmp.diff_main::<Efficient>("The big cat", "The cat").unwrap();
+    /// assert_eq!(DiffMatchPatch::diff_x_index(&diffs2, 1), 1);
+    /// assert_eq!(DiffMatchPatch::diff_x_index(&diffs2, 9), 5);
+    /// assert_eq!(DiffMatchPatch::diff_x_index(&diffs2, 6), 4);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn diff_x_index<D: DType>(diffs: &[Diff<D>], loc: usize) -> usize {
+        let mut chars1 = 0;
+        let mut chars2 = 0;
+        let mut last_chars1 = 0;
+        let mut last_chars2 = 0;
+
+        for diff in diffs {
+            match diff.op() {
+                Ops::Delete => {
+                    chars1 += diff.data().len();
+                }
+                Ops::Insert => {
+                    chars2 += diff.data().len();
+                }
+                Ops::Equal => {
+                    chars1 += diff.data().len();
+                    chars2 += diff.data().len();
+                }
+            }
+
+            if chars1 > loc {
+                // Overshot the location
+                match diff.op() {
+                    Ops::Delete => {
+                        // The location was deleted
+                        return last_chars2;
+                    }
+                    _ => {
+                        // The location was changed
+                        return last_chars2 + (loc - last_chars1);
+                    }
+                }
+            }
+
+            last_chars1 = chars1;
+            last_chars2 = chars2;
+        }
+
+        chars2
     }
 
     /// Given a text to search, a pattern to search for and an expected location in the text near which to find the pattern, return the location which matches closest.
