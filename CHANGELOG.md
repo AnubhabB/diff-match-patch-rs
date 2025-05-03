@@ -1,5 +1,14 @@
 # CHANGELOG.md
 
+## 0.5.0
+Features:
+
+    - `diff_x_index( .. )` API contributed by @acarl005
+
+Fix:
+
+    - Fix for [Issue](https://github.com/AnubhabB/diff-match-patch-rs/issues/14) by @aschamp-figma
+
 ## 0.4.1
 Minor performance & cleanup to Diff:
 
