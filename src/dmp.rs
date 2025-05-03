@@ -709,7 +709,7 @@ impl DiffMatchPatch {
         // Do all setup before casting to isize
         let mut v;
         let (v_offset, v_len, v1, v2, old_len, new_len) = {
-            let v_offset = (old.len() + new.len() + 1) / 2;
+            let v_offset = (old.len() + new.len()).div_ceil(2);
             let v_len = v_offset * 2;
 
             v = vec![-1 as Int; v_len * 2];
@@ -1300,7 +1300,7 @@ impl DiffMatchPatch {
                     if p_prev < diffs.len() && del_idx_end <= delete.len() {
                         diffs[p_prev].1 = delete[..del_idx_end].to_vec();
                     }
-                    if p_next < diffs.len() && overlap_1 < insert.len() {
+                    if p_next < diffs.len() && overlap_1 <= insert.len() {
                         diffs[p_next].1 = insert[overlap_1..].to_vec();
                     }
                     pointer += 1;
@@ -4459,6 +4459,37 @@ mod tests {
         ];
         DiffMatchPatch::cleanup_semantic(&mut diffs);
         assert_eq!(test, diffs);
+
+        // overlap that fully eliminates an delete
+        let mut diffs = vec![
+            Diff::delete(&"abcd".chars().collect::<Vec<_>>()[..]),
+            Diff::insert(&"abcd1212".chars().collect::<Vec<_>>()[..]),
+            Diff::equal(&"wxyz".chars().collect::<Vec<_>>()[..]),    
+        ];
+        let test = vec![
+            Diff::delete(&"".chars().collect::<Vec<_>>()[..]),
+            Diff::equal(&"abcd".chars().collect::<Vec<_>>()[..]),
+            Diff::insert(&"1212".chars().collect::<Vec<_>>()[..]),
+            Diff::equal(&"wxyz".chars().collect::<Vec<_>>()[..]),    
+        ];
+        DiffMatchPatch::cleanup_semantic(&mut diffs);
+        assert_eq!(test, diffs);
+
+        // overlap that fully eliminates an insert
+        let mut diffs = vec![
+            Diff::delete(&"abcd1212".chars().collect::<Vec<_>>()[..]),
+            Diff::insert(&"1212".chars().collect::<Vec<_>>()[..]),
+            Diff::equal(&"wxyz".chars().collect::<Vec<_>>()[..]),    
+        ];
+        let test = vec![
+            Diff::delete(&"abcd".chars().collect::<Vec<_>>()[..]),
+            Diff::equal(&"1212".chars().collect::<Vec<_>>()[..]),
+            Diff::insert(&"".chars().collect::<Vec<_>>()[..]),
+            Diff::equal(&"wxyz".chars().collect::<Vec<_>>()[..]),    
+        ];
+        DiffMatchPatch::cleanup_semantic(&mut diffs);
+        assert_eq!(test, diffs);
+
     }
 
     #[test]

@@ -39,7 +39,7 @@ Benchmarks are maintained [diff-match-patch-bench repository](https://github.com
 
 ```toml
 [dependencies]
-diff-match-patch-rs = "0.4.1"
+diff-match-patch-rs = "0.5.0"
 ```
 
 ### `Effitient` mode
@@ -166,7 +166,7 @@ fn main() -> Result<(), Error> {
 ### `Match` - fuzzy match of pattern in Text
 
 ```rust
-use diff_match_patch_rs::{DiffMatchPatch, Compat, Error, PatchInput};
+use diff_match_patch_rs::{DiffMatchPatch, Compat, Error, PatchInput, Efficient};
 
 // This is the source text
 const TXT: &str = "I am the very model of a modern Major-General, I've information on vegetable, animal, and mineral, 🚀👏👀";
@@ -175,12 +175,13 @@ const TXT: &str = "I am the very model of a modern Major-General, I've informati
 const PATTERN: &str = " that berry ";
 
 // Returns `location` of match if found, `None` if not found
-fn main() -> Option<usize> {
+fn main() {
     let dmp = DiffMatchPatch::new();
     
     // works with both `Efficient` and `Compat` modes
     // `5` here is an approx location to find `nearby` matches
-    dmp.match_main::<Efficient>(TXT, PATTERN, 5) // this should return Some(4)
+    let match_at = dmp.match_main::<Efficient>(TXT, PATTERN, 5); // this should return Some(4)
+    println!("Matched at: {match_at:?}");
 }
 ```
 

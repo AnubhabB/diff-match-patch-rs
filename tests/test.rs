@@ -1357,3 +1357,148 @@ fn test_match_main() {
         )
     );
 }
+
+// Test for Issue: https://github.com/AnubhabB/diff-match-patch-rs/issues/14
+#[test]
+fn test_patch_repeats_todo_import() -> Result<(), Error> {
+    let dmp = DiffMatchPatch::default();
+    
+    // Create source and target strings
+    let source = r##"(
+import { useState, useEffect } from "react";
+import { v4 as uuidv4 } from "uuid";
+import { TodoInput } from "./components/TodoInput";
+import { TodoList, Todo } from "./components/TodoList";
+import { TodoFilter, FilterStatus } from "./components/TodoFilter";
+import { Card, CardHeader, CardTitle, CardContent } from "./components/ui/card";
+
+// Mock implementation of uuid since we don't have access to the actual package
+const mockUuid = (): string => {
+  return Math.random().toString(36).substring(2, 15) +
+         Math.random().toString(36).substring(2, 15);
+};
+
+export default function App() {
+  const [todos, setTodos] = useState<Todo[]>(() => {
+    // Try to load todos from localStorage on initial render
+    const savedTodos = localStorage.getItem("todos");
+    return savedTodos ? JSON.parse(savedTodos) : [
+      { id: mockUui)"##;
+
+    let target = r##"(
+import { useState, useEffect } from "react";
+import { TodoInput } from "./components/TodoInput";
+import { TodoList, Todo } from "./components/TodoList";
+import { TodoFilter, FilterStatus } from "./components/TodoFilter";
+import { Card, CardHeader, CardTitle, CardContent } from "./components/ui/card";
+
+// Mock implementation of uuid since we don't have access to the actual package
+const mockUuid = (): string => {
+  return Math.random().toString(36).substring(2, 15) +
+         Math.random().toString(36).substring(2, 15);
+};
+
+export default function App() {
+  const [todos, setTodos] = useState<Todo[]>(() => {
+    // Try to load todos from localStorage on initial render
+    const savedTodos = localStorage.getItem("todos");
+    return savedTodos ? JSON.parse(savedTodos) : [
+      { id: mockUuid(), text: "Learn React", completed: true },
+      { id: mockUuid(), text: "Build a todo app", completed: false },
+      { id: mockUuid(), text: "Deploy to production", completed: false },
+    ];
+  });
+
+  const [activeFilter, setActiveFilter] = useState<FilterStatus>("all");
+
+  // Save todos to localStorage whenever they change
+  useEffect(() => {
+    localStorage.setItem("todos", JSON.stringify(todos));
+  }, [todos]);
+
+  // Calculate counts for the filter component
+  const todoCount = {
+    all: todos.length,
+    active: todos.filter(todo => !todo.completed).length,
+    completed: todos.filter(todo => todo.completed).length,
+  };
+
+  // Add a new todo
+  const handleAddTodo = (text: string) => {
+    setTodos([
+      ...todos,
+      {
+        id: mockUuid(),
+        text,
+        completed: false,
+      },
+    ]);
+  };
+
+  // Toggle todo completion status
+  const handleToggleComplete = (id: string) => {
+    setTodos(
+      todos.map(todo =>
+        todo.id === id ? { ...todo, completed: !todo.completed } : todo
+      )
+    );
+  };
+
+  // Delete a todo
+  const handleDeleteTodo = (id: string) => {
+    setTodos(todos.filter(todo => todo.id !== id));
+  };
+
+  return (
+    <div className="min-h-screen bg-background flex items-center justify-center p-4">
+      <div className="w-full max-w-md">
+        <Card className="shadow-lg">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-xl font-semibold text-center">Todo List</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <TodoInput onAddTodo={handleAddTodo} />
+
+            <TodoList
+              todos={todos}
+              activeFilter={activeFilter}
+              onToggleComplete={handleToggleComplete}
+              onDelete={handleDeleteTodo}
+            />
+
+            {todos.length > 0 && (
+              <TodoFilter
+                activeFilter={activeFilter}
+                onFilterChange={setActiveFilter}
+                todoCount={todoCount}
+              />
+            )}
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  );
+}
+)"##;
+    
+    // Create patches to transform source into target
+    let patches = dmp.patch_make(PatchInput::Texts::<Efficient>(source, target))?;
+    
+    // Apply the patches to the source string
+    let (patched, results) = dmp.patch_apply(&patches, source)?;
+    
+    // Verify all patches were applied successfully
+    assert!(results.iter().all(|&result| result));
+    
+    // Verify the patched string equals the target
+    assert_eq!(target, patched);
+    
+    // Also test with Compat mode
+    let patches_compat = dmp.patch_make(PatchInput::Texts::<Compat>(source, target))?;
+    let (patched_compat, results_compat) = dmp.patch_apply(&patches_compat, source)?;
+    
+    assert!(results_compat.iter().all(|&result| result));
+    assert_eq!(target, patched_compat);
+    
+    Ok(())
+}
