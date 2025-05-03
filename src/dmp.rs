@@ -709,7 +709,7 @@ impl DiffMatchPatch {
         // Do all setup before casting to isize
         let mut v;
         let (v_offset, v_len, v1, v2, old_len, new_len) = {
-            let v_offset = (old.len() + new.len() + 1) / 2;
+            let v_offset = (old.len() + new.len()).div_ceil(2);
             let v_len = v_offset * 2;
 
             v = vec![-1 as Int; v_len * 2];
