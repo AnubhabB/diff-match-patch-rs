@@ -1317,7 +1317,7 @@ impl DiffMatchPatch {
                         diffs[p_prev] = Diff::insert(&insert[..ins_idx_end]);
                     }
 
-                    if p_next < diffs.len() && overlap_2 < delete.len() {
+                    if p_next < diffs.len() && overlap_2 <= delete.len() {
                         diffs[p_next] = Diff::delete(&delete[overlap_2..]);
                     }
 
@@ -4460,17 +4460,32 @@ mod tests {
         DiffMatchPatch::cleanup_semantic(&mut diffs);
         assert_eq!(test, diffs);
 
-        // overlap that fully eliminates an delete
+        // overlap that fully eliminates a delete at the front of an insert
         let mut diffs = vec![
             Diff::delete(&"abcd".chars().collect::<Vec<_>>()[..]),
             Diff::insert(&"abcd1212".chars().collect::<Vec<_>>()[..]),
-            Diff::equal(&"wxyz".chars().collect::<Vec<_>>()[..]),    
+            Diff::equal(&"wxyz".chars().collect::<Vec<_>>()[..]),
         ];
         let test = vec![
             Diff::delete(&"".chars().collect::<Vec<_>>()[..]),
             Diff::equal(&"abcd".chars().collect::<Vec<_>>()[..]),
             Diff::insert(&"1212".chars().collect::<Vec<_>>()[..]),
-            Diff::equal(&"wxyz".chars().collect::<Vec<_>>()[..]),    
+            Diff::equal(&"wxyz".chars().collect::<Vec<_>>()[..]),
+        ];
+        DiffMatchPatch::cleanup_semantic(&mut diffs);
+        assert_eq!(test, diffs);
+
+        // overlap that fully eliminates a delete at the tail of an insert
+        let mut diffs = vec![
+            Diff::delete(&"abcd".chars().collect::<Vec<_>>()[..]),
+            Diff::insert(&"1212abcd".chars().collect::<Vec<_>>()[..]),
+            Diff::delete(&"2323".chars().collect::<Vec<_>>()[..]),
+        ];
+        let test = vec![
+            Diff::insert(&"1212".chars().collect::<Vec<_>>()[..]),
+            Diff::equal(&"abcd".chars().collect::<Vec<_>>()[..]),
+            Diff::delete(&"".chars().collect::<Vec<_>>()[..]),
+            Diff::delete(&"2323".chars().collect::<Vec<_>>()[..]),
         ];
         DiffMatchPatch::cleanup_semantic(&mut diffs);
         assert_eq!(test, diffs);
