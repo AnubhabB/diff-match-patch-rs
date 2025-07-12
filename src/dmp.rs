@@ -4494,17 +4494,16 @@ mod tests {
         let mut diffs = vec![
             Diff::delete(&"abcd1212".chars().collect::<Vec<_>>()[..]),
             Diff::insert(&"1212".chars().collect::<Vec<_>>()[..]),
-            Diff::equal(&"wxyz".chars().collect::<Vec<_>>()[..]),    
+            Diff::equal(&"wxyz".chars().collect::<Vec<_>>()[..]),
         ];
         let test = vec![
             Diff::delete(&"abcd".chars().collect::<Vec<_>>()[..]),
             Diff::equal(&"1212".chars().collect::<Vec<_>>()[..]),
             Diff::insert(&"".chars().collect::<Vec<_>>()[..]),
-            Diff::equal(&"wxyz".chars().collect::<Vec<_>>()[..]),    
+            Diff::equal(&"wxyz".chars().collect::<Vec<_>>()[..]),
         ];
         DiffMatchPatch::cleanup_semantic(&mut diffs);
         assert_eq!(test, diffs);
-
     }
 
     #[test]

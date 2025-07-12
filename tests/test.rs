@@ -1362,7 +1362,7 @@ fn test_match_main() {
 #[test]
 fn test_patch_repeats_todo_import() -> Result<(), Error> {
     let dmp = DiffMatchPatch::default();
-    
+
     // Create source and target strings
     let source = r##"(
 import { useState, useEffect } from "react";
@@ -1480,25 +1480,25 @@ export default function App() {
   );
 }
 )"##;
-    
+
     // Create patches to transform source into target
     let patches = dmp.patch_make(PatchInput::Texts::<Efficient>(source, target))?;
-    
+
     // Apply the patches to the source string
     let (patched, results) = dmp.patch_apply(&patches, source)?;
-    
+
     // Verify all patches were applied successfully
     assert!(results.iter().all(|&result| result));
-    
+
     // Verify the patched string equals the target
     assert_eq!(target, patched);
-    
+
     // Also test with Compat mode
     let patches_compat = dmp.patch_make(PatchInput::Texts::<Compat>(source, target))?;
     let (patched_compat, results_compat) = dmp.patch_apply(&patches_compat, source)?;
-    
+
     assert!(results_compat.iter().all(|&result| result));
     assert_eq!(target, patched_compat);
-    
+
     Ok(())
 }

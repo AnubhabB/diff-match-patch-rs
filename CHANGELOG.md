@@ -1,5 +1,10 @@
 # CHANGELOG.md
 
+## 0.5.1
+Fix:
+
+    - Fix full overlap elimination for inserts with trailing deletes by @aschamp-figma
+
 ## 0.5.0
 Features:
 

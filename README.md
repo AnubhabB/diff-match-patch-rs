@@ -39,7 +39,7 @@ Benchmarks are maintained [diff-match-patch-bench repository](https://github.com
 
 ```toml
 [dependencies]
-diff-match-patch-rs = "0.5.0"
+diff-match-patch-rs = "0.5.1"
 ```
 
 ### `Effitient` mode
