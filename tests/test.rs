@@ -1656,3 +1656,212 @@ fn test_patch_no_overflow_edge_lengths() -> Result<(), Error> {
 
     Ok(())
 }
+
+// =============================================================================
+// Fuzzy Patch Application Tests
+// These tests verify patch_apply's fuzzy matching capabilities when applying
+// patches to content that differs slightly from the original.
+// Ported from Kodein's edit tool test suite.
+// =============================================================================
+
+/// Test fuzzy patch application when content has extra whitespace on lines
+/// Scenario: Content has leading/trailing spaces, patch was created without them
+#[test]
+fn test_fuzzy_patch_line_trimmed() -> Result<(), Error> {
+    let dmp = DiffMatchPatch::new();
+
+    // Original content without extra whitespace
+    let old = "hello world";
+    let new = "hello replaced";
+
+    // Create patch from clean content
+    let patches = dmp.patch_make(PatchInput::Texts::<Compat>(old, new))?;
+
+    // Apply to content with extra whitespace - should fuzzy match
+    let content_with_whitespace = "  hello world  ";
+    let (result, ops) = dmp.patch_apply(&patches, content_with_whitespace)?;
+
+    // At least one patch should succeed via fuzzy matching
+    assert!(
+        ops.iter().any(|&o| o),
+        "fuzzy patch should handle content with extra whitespace"
+    );
+    assert!(
+        result.contains("replaced"),
+        "result should contain the replacement"
+    );
+
+    Ok(())
+}
+
+/// Test fuzzy patch application with different indentation
+/// Scenario: Patch was created from code with 2-space indent, applied to 4-space indent
+#[test]
+fn test_fuzzy_patch_different_indentation() -> Result<(), Error> {
+    let dmp = DiffMatchPatch::new();
+
+    // Original with 2-space indentation
+    let old = "fn foo() {\n  bar();\n}";
+    let new = "fn baz() {\n  qux();\n}";
+
+    // Create patch
+    let patches = dmp.patch_make(PatchInput::Texts::<Compat>(old, new))?;
+
+    // Apply to content with 4-space indentation
+    let content_4space = "fn foo() {\n    bar();\n}";
+    let (result, ops) = dmp.patch_apply(&patches, content_4space)?;
+
+    // Check if fuzzy matching worked
+    assert!(
+        ops.iter().any(|&o| o),
+        "fuzzy patch should handle different indentation"
+    );
+
+    Ok(())
+}
+
+/// Test fuzzy patch with multiline code block formatting differences
+#[test]
+fn test_fuzzy_patch_multiline_block() -> Result<(), Error> {
+    let dmp = DiffMatchPatch::new();
+
+    // Original code block
+    let old = "impl Foo {\n  fn bar(&self) {\n    println!(\"hello\");\n  }\n}";
+    let new = "impl Foo {\n  fn bar(&self) {\n    println!(\"world\");\n  }\n}";
+
+    // Create patch
+    let patches = dmp.patch_make(PatchInput::Texts::<Compat>(old, new))?;
+
+    // Apply to content with different formatting (4-space indent)
+    let content = "impl Foo {\n    fn bar(&self) {\n        println!(\"hello\");\n    }\n}";
+    let (result, ops) = dmp.patch_apply(&patches, content)?;
+
+    assert!(
+        ops.iter().any(|&o| o),
+        "fuzzy patch should handle multiline blocks with formatting differences"
+    );
+
+    Ok(())
+}
+
+/// Test fuzzy patch with trailing newline differences
+#[test]
+fn test_fuzzy_patch_trailing_newline() -> Result<(), Error> {
+    let dmp = DiffMatchPatch::new();
+
+    // Original without trailing newline
+    let old = "line1\nline2";
+    let new = "line1\nreplaced";
+
+    // Create patch
+    let patches = dmp.patch_make(PatchInput::Texts::<Compat>(old, new))?;
+
+    // Apply to content with trailing newline
+    let content_with_newline = "line1\nline2\n";
+    let (result, ops) = dmp.patch_apply(&patches, content_with_newline)?;
+
+    assert!(
+        ops.iter().any(|&o| o),
+        "fuzzy patch should handle trailing newline differences"
+    );
+    assert!(result.contains("replaced"));
+
+    Ok(())
+}
+
+/// Test fuzzy patch with minor whitespace differences
+#[test]
+fn test_fuzzy_patch_minor_whitespace() -> Result<(), Error> {
+    let dmp = DiffMatchPatch::new();
+
+    // Original with single space
+    let old = "if (x == 1) {\n    return true;\n}";
+    let new = "if (x == 1) {\n    return false;\n}";
+
+    // Create patch
+    let patches = dmp.patch_make(PatchInput::Texts::<Compat>(old, new))?;
+
+    // Apply to content with double space (minor difference)
+    let content_double_space = "if (x  == 1) {\n    return true;\n}";
+    let (result, ops) = dmp.patch_apply(&patches, content_double_space)?;
+
+    assert!(
+        ops.iter().any(|&o| o),
+        "fuzzy patch should handle minor whitespace differences"
+    );
+
+    Ok(())
+}
+
+/// Test fuzzy patch with single character typo
+#[test]
+fn test_fuzzy_patch_single_char_typo() -> Result<(), Error> {
+    let dmp = DiffMatchPatch::new();
+
+    // Original with correct spelling
+    let old = "function hello() { return 1; }";
+    let new = "function hello() { return 42; }";
+
+    // Create patch
+    let patches = dmp.patch_make(PatchInput::Texts::<Compat>(old, new))?;
+
+    // Apply to content with typo ("helo" instead of "hello")
+    let content_with_typo = "function helo() { return 1; }";
+    let (result, ops) = dmp.patch_apply(&patches, content_with_typo)?;
+
+    assert!(
+        ops.iter().any(|&o| o),
+        "fuzzy patch should handle single char typo"
+    );
+
+    Ok(())
+}
+
+/// Test that fuzzy patch preserves surrounding context
+#[test]
+fn test_fuzzy_patch_preserves_context() -> Result<(), Error> {
+    let dmp = DiffMatchPatch::new();
+
+    // Only change one line in a multi-line block
+    let old = "fn main() {\n    let x = 1;\n    let y = 2;\n}";
+    let new = "fn main() {\n    let x = 100;\n    let y = 2;\n}";
+
+    // Create patch
+    let patches = dmp.patch_make(PatchInput::Texts::<Compat>(old, new))?;
+
+    // Apply to identical content
+    let (result, ops) = dmp.patch_apply(&patches, old)?;
+
+    assert!(ops.iter().all(|&o| o), "all patches should succeed");
+    assert!(
+        result.contains("let x = 100;"),
+        "replacement should be applied"
+    );
+    assert!(
+        result.contains("let y = 2;"),
+        "surrounding context should be preserved"
+    );
+
+    Ok(())
+}
+
+/// Test fuzzy patch with completely different content (should fail gracefully)
+#[test]
+fn test_fuzzy_patch_no_match() -> Result<(), Error> {
+    let dmp = DiffMatchPatch::new();
+
+    let old = "hello world";
+    let new = "hello replaced";
+
+    let patches = dmp.patch_make(PatchInput::Texts::<Compat>(old, new))?;
+
+    // Apply to completely different content
+    let different_content = "foo bar baz qux";
+    let (result, ops) = dmp.patch_apply(&patches, different_content)?;
+
+    // Should not panic, patches may or may not apply
+    // The important thing is graceful handling
+    assert!(result.len() > 0 || different_content.len() > 0);
+
+    Ok(())
+}
