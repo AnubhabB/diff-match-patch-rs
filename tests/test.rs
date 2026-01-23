@@ -1502,3 +1502,157 @@ export default function App() {
 
     Ok(())
 }
+
+/// Test that patch_apply doesn't panic with arithmetic overflow when patches fail to match.
+///
+/// This test covers a bug where `delta -= (p.length2 - p.length1)` would overflow
+/// when length1 > length2 (since both are usize). The fix casts to isize before subtraction.
+///
+/// Issue: When applying patches to content with different indentation, the patch may fail
+/// to match, and the delta calculation would overflow.
+#[test]
+fn test_patch_apply_no_overflow_on_failed_match() -> Result<(), Error> {
+    let dmp = DiffMatchPatch::new();
+
+    // Content with 4-space indentation
+    let content = "impl Foo {\n    fn bar(&self) {\n        println!(\"hello\");\n    }\n}";
+
+    // Search pattern with 2-space indentation (won't match exactly)
+    let old_pattern = "impl Foo {\n  fn bar(&self) {\n    println!(\"hello\");\n  }\n}";
+    let new_pattern = "replaced";
+
+    // Create patches from old_pattern -> new_pattern
+    let patches = dmp.patch_make(PatchInput::Texts::<Compat>(old_pattern, new_pattern))?;
+
+    // Apply to content - this should NOT panic even though the patch won't match well
+    // Before the fix, this would panic with "attempt to subtract with overflow"
+    let result = dmp.patch_apply(&patches, content);
+
+    // The operation should complete without panicking
+    assert!(result.is_ok());
+
+    Ok(())
+}
+
+/// Additional test for overflow with larger length difference
+#[test]
+fn test_patch_apply_no_overflow_large_length_diff() -> Result<(), Error> {
+    let dmp = DiffMatchPatch::new();
+
+    // Create a scenario where old text is much longer than new text
+    let old_text = "line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10";
+    let new_text = "x";
+
+    // Create patches
+    let patches = dmp.patch_make(PatchInput::Texts::<Compat>(old_text, new_text))?;
+
+    // Apply to completely different content - patch will fail but should not overflow
+    let different_content = "completely\ndifferent\ncontent\nhere";
+    let result = dmp.patch_apply(&patches, different_content);
+
+    assert!(result.is_ok());
+
+    Ok(())
+}
+
+/// Test for potential overflow in diff_cleanup_merge when pointer is small
+/// Location: dmp.rs line 545 - `*pointer - delete_n - insert_n`
+#[test]
+fn test_diff_cleanup_merge_no_overflow_small_pointer() -> Result<(), Error> {
+    let dmp = DiffMatchPatch::new();
+
+    // Create diffs that trigger the cleanup_merge code path with small pointer values
+    // This should exercise the `*pointer - delete_n - insert_n` calculation
+    let old = "ab";
+    let new = "cd";
+
+    let diffs = dmp.diff_main::<Compat>(old, new)?;
+    // Should not panic
+    assert!(!diffs.is_empty());
+
+    Ok(())
+}
+
+/// Test for potential overflow in cleanup_merge_proc_equal
+/// Location: dmp.rs line 1708 - `*pointer -= delete_n + insert_n`
+#[test]
+fn test_diff_cleanup_no_overflow_pointer_subtract() -> Result<(), Error> {
+    let dmp = DiffMatchPatch::new();
+
+    // Create a scenario with interleaved inserts/deletes that trigger cleanup
+    let old = "The quick brown fox";
+    let new = "A slow red dog";
+
+    let diffs = dmp.diff_main::<Compat>(old, new)?;
+    // Should not panic during cleanup
+    assert!(!diffs.is_empty());
+
+    Ok(())
+}
+
+/// Test diff_main with strings that have common prefix/suffix removal
+/// This exercises multiple subtraction paths
+#[test]
+fn test_diff_main_no_overflow_common_affix() -> Result<(), Error> {
+    let dmp = DiffMatchPatch::new();
+
+    // Strings with common prefix and suffix
+    let old = "prefix_MIDDLE_suffix";
+    let new = "prefix_CHANGED_suffix";
+
+    let diffs = dmp.diff_main::<Compat>(old, new)?;
+    assert!(!diffs.is_empty());
+
+    // Another case - only suffix
+    let old2 = "ABC_suffix";
+    let new2 = "XYZ_suffix";
+
+    let diffs2 = dmp.diff_main::<Compat>(old2, new2)?;
+    assert!(!diffs2.is_empty());
+
+    Ok(())
+}
+
+/// Test with empty strings to check boundary conditions
+#[test]
+fn test_diff_no_overflow_empty_strings() -> Result<(), Error> {
+    let dmp = DiffMatchPatch::new();
+
+    // Empty old
+    let diffs1 = dmp.diff_main::<Compat>("", "new content")?;
+    assert!(!diffs1.is_empty());
+
+    // Empty new
+    let diffs2 = dmp.diff_main::<Compat>("old content", "")?;
+    assert!(!diffs2.is_empty());
+
+    // Both empty
+    let diffs3 = dmp.diff_main::<Compat>("", "")?;
+    assert!(diffs3.is_empty());
+
+    Ok(())
+}
+
+/// Test patch operations with edge case lengths
+#[test]
+fn test_patch_no_overflow_edge_lengths() -> Result<(), Error> {
+    let dmp = DiffMatchPatch::new();
+
+    // Single char to long string
+    let patches1 = dmp.patch_make(PatchInput::Texts::<Compat>(
+        "x",
+        "this is a much longer string",
+    ))?;
+    let (result1, _) = dmp.patch_apply(&patches1, "x")?;
+    assert_eq!(result1, "this is a much longer string");
+
+    // Long string to single char
+    let patches2 = dmp.patch_make(PatchInput::Texts::<Compat>(
+        "this is a much longer string",
+        "x",
+    ))?;
+    let (result2, _) = dmp.patch_apply(&patches2, "this is a much longer string")?;
+    assert_eq!(result2, "x");
+
+    Ok(())
+}
