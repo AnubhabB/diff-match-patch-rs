@@ -17,6 +17,9 @@ percent-encoding = "2"
 [target.wasm32-unknown-unknown.dependencies]
 chrono = "0"
 
+[target.wasm32-wasip2.dependencies]
+chrono = "0"
+
 [package.metadata.docs.rs]
 targets = [
     "aarch64-unknown-linux-gnu",
