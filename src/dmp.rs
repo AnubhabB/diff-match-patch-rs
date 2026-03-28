@@ -542,7 +542,8 @@ impl DiffMatchPatch {
 
         if delete_n >= 1 && insert_n >= 1 {
             // Delete the offending records and add the merged ones.
-            let idxstart = *pointer - delete_n - insert_n;
+            // Use saturating_sub to avoid overflow when pointer is unexpectedly small
+            let idxstart = pointer.saturating_sub(delete_n).saturating_sub(insert_n);
             let idxend = idxstart + delete_n + insert_n;
 
             if idxstart <= idxend && idxstart < diffs.len() && idxend <= diffs.len() {
@@ -1645,10 +1646,18 @@ impl DiffMatchPatch {
                 let commonlen = Self::common_prefix(&insert_data[..], &delete_data[..], false);
                 if commonlen != 0 && commonlen < insert_data.len() && commonlen < delete_data.len()
                 {
-                    let tmpidx = *pointer - delete_n - insert_n - 1;
-                    if (0..diffs.len()).contains(&tmpidx) && diffs[tmpidx].op() == Ops::Equal {
-                        diffs[tmpidx].1 =
-                            [&diffs[tmpidx].1[..], &insert_data[..commonlen]].concat();
+                    // Use checked subtraction to avoid overflow when pointer is small
+                    let tmpidx = pointer
+                        .checked_sub(delete_n)
+                        .and_then(|v| v.checked_sub(insert_n))
+                        .and_then(|v| v.checked_sub(1));
+                    if let Some(idx) = tmpidx {
+                        if (0..diffs.len()).contains(&idx) && diffs[idx].op() == Ops::Equal {
+                            diffs[idx].1 = [&diffs[idx].1[..], &insert_data[..commonlen]].concat();
+                        } else {
+                            diffs.insert(0, Diff::equal(&insert_data[..commonlen]));
+                            *pointer += 1;
+                        }
                     } else {
                         diffs.insert(0, Diff::equal(&insert_data[..commonlen]));
                         *pointer += 1;
@@ -1697,7 +1706,8 @@ impl DiffMatchPatch {
             }
 
             // Delete the offending records and add the merged ones.
-            *pointer -= delete_n + insert_n;
+            // Use saturating_sub to avoid overflow when pointer is unexpectedly small
+            *pointer = pointer.saturating_sub(delete_n + insert_n);
 
             // Reversing because index will not change
             (*pointer..*pointer + delete_n + insert_n)
@@ -2748,7 +2758,8 @@ impl DiffMatchPatch {
                 // No match found.  :(
                 results[x] = false;
                 // Subtract the delta for this failed patch from subsequent patches.
-                delta -= (p.length2 - p.length1) as isize;
+                // Cast to isize before subtraction to avoid overflow when length1 > length2
+                delta -= (p.length2 as isize) - (p.length1 as isize);
             }
         }
 
